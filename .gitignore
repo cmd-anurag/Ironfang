@@ -1,0 +1,4 @@
+chess
+*.o
+*.exe
+*.out
