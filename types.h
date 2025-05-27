@@ -25,7 +25,7 @@ inline bool isBlack(Piece p) {
     return p >= BP && p <= BK;
 }
 
-inline Color getColor(Piece p) {
+inline Color getPieceColor(Piece p) {
     if(isWhite(p)) return WHITE;
     if(isBlack(p)) return BLACK;
     return NO_COLOR;

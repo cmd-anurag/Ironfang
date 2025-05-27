@@ -1,4 +1,5 @@
 #include "board.h"
+#include "mailbox.h"
 #include<iostream>
 
 Board::Board() {
@@ -22,6 +23,8 @@ Board::Board() {
     for(int i = 16; i <= 47; ++i) {
         squares[i] = NONE;
     }
+
+    sideToMove = WHITE;
 }
 
 Piece Board::getPiece(int square) const {
@@ -43,4 +46,91 @@ void Board::print() const {
         std::cout << '\n';
     }
     std::cout << "   a b c d e f g h" << '\n';
+}
+
+std::vector<Move> Board::generateMoves() const {
+    std::vector<Move> moves;
+
+    for(int square = 0; square < 64; ++square) {
+        Piece p = getPiece(square);
+        Color color = getPieceColor(p);
+
+        if(p == NONE || color != sideToMove) continue;
+
+        switch(p) {
+            case WP:
+            case BP:
+                generatePawnMoves(square, moves);
+                break;
+
+            case WR:
+            case BR:
+                // generateRookMoves(squaes, moves);
+                break;
+        }
+    }
+
+    return moves;
+}
+
+void Board::generatePawnMoves(int square, std::vector<Move> &moves) const {
+    Piece p = getPiece(square);
+    Color color = getPieceColor(p);
+
+    int moveDir;
+    int rightCapture;
+    int leftCapture; 
+
+    if(color == WHITE) {
+        moveDir = -8;
+        rightCapture = -7;
+        leftCapture = -9;
+    }
+    else {
+        moveDir = 8;
+        rightCapture = 9;
+        leftCapture = 7;
+    }
+
+    // Forward 1 step Movement
+    int newSquare = square + moveDir;
+    
+    
+    if(MailBox::isOnboard(newSquare) && getPiece(newSquare) == NONE) {
+        bool promotion = (newSquare >=0 && newSquare <= 7) || (newSquare >= 56 && newSquare <= 63);
+        Move move(p, square, newSquare, promotion, false);
+        moves.push_back(move);
+    }
+
+    // Left Capture
+    newSquare = square + leftCapture;
+   
+
+    if(MailBox::isOnboard(newSquare)) {
+
+        Piece occupiedPiece = getPiece(newSquare);
+
+        if(occupiedPiece != NONE && getPieceColor(occupiedPiece) != color) {
+            bool promotion = (newSquare >=0 && newSquare <= 7) || (newSquare >= 56 && newSquare <= 63);
+            Move move(p, square, newSquare, promotion, true);
+            moves.push_back(move);
+        }
+    }
+
+    // Right Capture
+    newSquare = square + rightCapture;
+    
+
+    if(MailBox::isOnboard(newSquare)) {
+        Piece occupiedPiece = getPiece(newSquare);
+        if(occupiedPiece != NONE && getPieceColor(occupiedPiece) != color) {
+            bool promotion = (newSquare >=0 && newSquare <= 7) || (newSquare >= 56 && newSquare <= 63);
+            Move move(p, square, newSquare, promotion, true);
+            moves.push_back(move);
+        }
+    }
+
+    // Forward 2 step movement
+    newSquare = square + moveDir + moveDir;
+    
 }
