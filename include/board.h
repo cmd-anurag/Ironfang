@@ -17,7 +17,8 @@ class Board {
 
     private:
         Piece squares[64];
-        void generatePawnMoves(int square, std::vector<Move>& moves) const;
+        void generatePawnMoves(int square, std::vector<Move>& moves, Piece p, Color color) const;
+        void generateRookMoves(int square, std::vector<Move>& moves, Piece p, Color color) const;
 };
 
 #endif

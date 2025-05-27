@@ -60,12 +60,11 @@ std::vector<Move> Board::generateMoves() const {
         switch(p) {
             case WP:
             case BP:
-                generatePawnMoves(square, moves);
+                generatePawnMoves(square, moves, p, color);
                 break;
-
             case WR:
             case BR:
-                // generateRookMoves(squaes, moves);
+                generateRookMoves(square, moves, p, color);
                 break;
             default:
                 break;
@@ -75,9 +74,7 @@ std::vector<Move> Board::generateMoves() const {
     return moves;
 }
 
-void Board::generatePawnMoves(int square, std::vector<Move> &moves) const {
-    Piece p = getPiece(square);
-    Color color = getPieceColor(p);
+void Board::generatePawnMoves(int square, std::vector<Move> &moves, Piece p, Color color) const {
 
     int moveDir;
     int rightCapture;
@@ -130,6 +127,49 @@ void Board::generatePawnMoves(int square, std::vector<Move> &moves) const {
             moves.push_back(move);
         }
     }
-        // Forward 2 step movement
-        // newSquare = square + moveDir + moveDir;
+
+    // Forward 2 step movement
+    if(color == WHITE && square >= 48 && square <= 55) {
+        newSquare = MailBox::mailbox[mailboxIndex + moveDir + moveDir];
+        if(getPiece(newSquare) == NONE) {
+            Move move(p, square, newSquare, false, false);
+            moves.push_back(move);
+        }
+    }
+
+    if(color == BLACK && square >= 8 && square <= 15) {
+        newSquare = MailBox::mailbox[mailboxIndex + moveDir + moveDir];
+        if(getPiece(newSquare) == NONE) {
+            Move move(p, square, newSquare, false, false);
+            moves.push_back(move);
+        }
+    }
+}
+
+void Board::generateRookMoves(int square, std::vector<Move> &moves, Piece p, Color color) const {
+    const int directions[4] = {-10, 1, 10, -1};
+    int mailBoxIndex = MailBox::mailbox64[square];
+
+    for(int direction : directions) {
+
+        for(int factor = 1; factor < 8; ++factor) {
+
+            int newSquare = MailBox::mailbox[mailBoxIndex + direction*factor];
+            if(newSquare == -1) break;
+
+            Piece occupied = getPiece(newSquare);
+
+            if(occupied == NONE) {
+                Move move(p, square, newSquare);
+                moves.push_back(move);
+            }
+            else if(getPieceColor(occupied) == color) break;
+            else {
+                Move move(p, square, newSquare, 0, true);
+                // lmao who will add this to moves?
+                moves.push_back(move);
+                break;
+            }
+        }
+    }
 }
