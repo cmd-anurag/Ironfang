@@ -11,10 +11,12 @@ int main() {
     for(int i = 0; i < 64; ++i) {
         b.setPiece(NONE, i);
     }
-    b.setPiece(BP, 55);
-    b.setPiece(WR, 62);
-    b.print();
+
+    ;
+    b.setPiece(BP, 63);
+
     b.sideToMove = BLACK;
+    b.print();
 
 
     std::vector<Move> moves = b.generateMoves();
@@ -25,7 +27,5 @@ int main() {
         std::cout << "CAPTURE: " << move.capture << '\n';
         std::cout << "PROMOTION: " << move.promotion << '\n';
     }
-
-    
 
 }

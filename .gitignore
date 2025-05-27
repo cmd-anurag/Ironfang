@@ -2,3 +2,4 @@ chess
 *.o
 *.exe
 *.out
+/build/

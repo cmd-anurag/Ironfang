@@ -67,6 +67,8 @@ std::vector<Move> Board::generateMoves() const {
             case BR:
                 // generateRookMoves(squaes, moves);
                 break;
+            default:
+                break;
         }
     }
 
@@ -82,34 +84,34 @@ void Board::generatePawnMoves(int square, std::vector<Move> &moves) const {
     int leftCapture; 
 
     if(color == WHITE) {
-        moveDir = -8;
-        rightCapture = -7;
-        leftCapture = -9;
+        moveDir = -10;
+        rightCapture = -9;
+        leftCapture = -11;
     }
     else {
-        moveDir = 8;
-        rightCapture = 9;
-        leftCapture = 7;
+        moveDir = 10;
+        rightCapture = 11;
+        leftCapture = 9;
     }
 
     // Forward 1 step Movement
-    int newSquare = square + moveDir;
-    
-    
-    if(MailBox::isOnboard(newSquare) && getPiece(newSquare) == NONE) {
+
+    int mailboxIndex = MailBox::mailbox64[square];
+    int newSquare = MailBox::mailbox[mailboxIndex + moveDir];
+
+    if(newSquare != -1 && getPiece(newSquare) == NONE) {
+        
         bool promotion = (newSquare >=0 && newSquare <= 7) || (newSquare >= 56 && newSquare <= 63);
         Move move(p, square, newSquare, promotion, false);
         moves.push_back(move);
     }
 
+    
+
     // Left Capture
-    newSquare = square + leftCapture;
-   
-
-    if(MailBox::isOnboard(newSquare)) {
-
+    newSquare = MailBox::mailbox[mailboxIndex + leftCapture];
+    if(newSquare != -1) {
         Piece occupiedPiece = getPiece(newSquare);
-
         if(occupiedPiece != NONE && getPieceColor(occupiedPiece) != color) {
             bool promotion = (newSquare >=0 && newSquare <= 7) || (newSquare >= 56 && newSquare <= 63);
             Move move(p, square, newSquare, promotion, true);
@@ -118,10 +120,9 @@ void Board::generatePawnMoves(int square, std::vector<Move> &moves) const {
     }
 
     // Right Capture
-    newSquare = square + rightCapture;
     
-
-    if(MailBox::isOnboard(newSquare)) {
+    newSquare = MailBox::mailbox[mailboxIndex + rightCapture];
+    if(newSquare != -1) {
         Piece occupiedPiece = getPiece(newSquare);
         if(occupiedPiece != NONE && getPieceColor(occupiedPiece) != color) {
             bool promotion = (newSquare >=0 && newSquare <= 7) || (newSquare >= 56 && newSquare <= 63);
@@ -129,8 +130,6 @@ void Board::generatePawnMoves(int square, std::vector<Move> &moves) const {
             moves.push_back(move);
         }
     }
-
-    // Forward 2 step movement
-    newSquare = square + moveDir + moveDir;
-    
+        // Forward 2 step movement
+        // newSquare = square + moveDir + moveDir;
 }
