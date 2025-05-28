@@ -3,6 +3,9 @@
 #include <string>
 
 std::string moveToAlgrebraic(Move move) {
+    if(move.isKingSideCastle) return "O-O";
+    if(move.isQueenSideCastle) return "O-O-O";
+
     std::string result;
     char file_from = 'a' + (move.from % 8);
     int rank_from = 8 - (move.from / 8);

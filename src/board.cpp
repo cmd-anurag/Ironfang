@@ -25,6 +25,11 @@ Board::Board() {
     }
 
     sideToMove = WHITE;
+    whiteKingsideCastle = true;
+    whiteQueensideCastle = true;
+    blackKingsideCastle = true;
+    blackQueensideCastle = true;
+
 }
 
 Piece Board::getPiece(int square) const {
@@ -48,6 +53,47 @@ void Board::print() const {
     std::cout << "   a b c d e f g h" << '\n';
 }
 
+bool Board::isSquareAttacked(int square, Color opponentColor) const {
+
+    const int directions[8] = {-11, -10, -9, 1, 11, 10, 9, -1};
+    int mailBoxIndex = MailBox::mailbox64[square];
+
+    for(int direction : directions) {
+        for(int factor = 1; factor < 8; ++factor) {
+            int newSquare = MailBox::mailbox[mailBoxIndex + direction*factor];
+            if(newSquare == -1) break;
+
+            Piece occupied = getPiece(newSquare);
+            if(occupied != NONE) {
+                Color c = getPieceColor(occupied);
+                if(c == opponentColor) {
+                    return true;
+                }
+                else {
+                    break;
+                }
+            }
+            
+        }
+    }
+    const int knightDirections[8] = { -21, -19,-12, -8, 8, 12, 19, 21 };
+    for(int direction : knightDirections) {
+        int newSquare = MailBox::mailbox[mailBoxIndex + direction];
+        if(newSquare == -1) break;
+        Piece occupied = getPiece(newSquare);
+        if(occupied != NONE) {
+            Color c = getPieceColor(occupied);
+            if(c == opponentColor) {
+                return true;
+            }
+            else {
+                continue;
+            }
+        }
+    }
+    return false;
+}
+
 std::vector<Move> Board::generateMoves() const {
     std::vector<Move> moves;
 
@@ -65,6 +111,22 @@ std::vector<Move> Board::generateMoves() const {
             case WR:
             case BR:
                 generateRookMoves(square, moves, p, color);
+                break;
+            case WB:
+            case BB:
+                generateBishopMoves(square, moves, p, color);
+                break;
+            case WQ:
+            case BQ:
+                generateQueenMoves(square, moves, p, color);
+                break;
+            case WK:
+            case BK:
+                generateKingMoves(square, moves, p, color);
+                break;
+            case WN:
+            case BN:
+                generateKnightMoves(square, moves, p, color);
                 break;
             default:
                 break;
@@ -166,10 +228,168 @@ void Board::generateRookMoves(int square, std::vector<Move> &moves, Piece p, Col
             else if(getPieceColor(occupied) == color) break;
             else {
                 Move move(p, square, newSquare, 0, true);
-                // lmao who will add this to moves?
                 moves.push_back(move);
                 break;
             }
         }
     }
 }
+
+void Board::generateBishopMoves(int square, std::vector<Move>& moves, Piece p, Color color) const {
+    const int directions[4] = {-11, -9, 11, 9};
+    int mailBoxIndex = MailBox::mailbox64[square];
+
+    for(int direction : directions) {
+        for(int factor = 1; factor < 8; ++factor) {
+            int newSquare = MailBox::mailbox[mailBoxIndex + direction*factor];
+            if(newSquare == -1) break;
+
+            Piece occupied = getPiece(newSquare);
+
+            if(occupied == NONE) {
+                Move move(p, square, newSquare);
+                moves.push_back(move);
+            }
+            else if(getPieceColor(occupied) == color) break;
+            else {
+                Move move(p, square, newSquare, 0, true);
+                moves.push_back(move);
+                break;
+            }
+        }
+    }
+}
+
+void Board::generateQueenMoves(int square, std::vector<Move>& moves, Piece p, Color color) const {
+    const int directions[8] = {-11, -10, -9, 1, 11, 10, 9, -1};
+    int mailBoxIndex = MailBox::mailbox64[square];
+
+    for(int direction : directions) {
+        for(int factor = 1; factor < 8; ++factor) {
+            int newSquare = MailBox::mailbox[mailBoxIndex + direction*factor];
+            if(newSquare == -1) break;
+
+            Piece occupied = getPiece(newSquare);
+
+            if(occupied == NONE) {
+                Move move(p, square, newSquare);
+                moves.push_back(move);
+            }
+            else if(getPieceColor(occupied) == color) break;
+            else {
+                Move move(p, square, newSquare, 0, true);
+                moves.push_back(move);
+                break;
+            }
+        }
+    }
+}
+
+void Board::generateKingMoves(int square, std::vector<Move>& moves, Piece p, Color color) const {
+    const int directions[8] = {-11, -10, -9, 1, 11, 10, 9, -1};
+    int mailBoxIndex = MailBox::mailbox64[square];
+
+    for(int direction : directions) {
+            int newSquare = MailBox::mailbox[mailBoxIndex + direction];
+            if(newSquare == -1) continue;
+
+            Piece occupied = getPiece(newSquare);
+
+            if(occupied == NONE) {
+                Move move(p, square, newSquare);
+                moves.push_back(move);
+            }
+            else if(getPieceColor(occupied) == color) continue;
+            else {
+                Move move(p, square, newSquare, 0, true);
+                moves.push_back(move);
+                continue;
+            }
+    }
+    // right.. king can castle too
+    
+
+    if(color == WHITE) {
+        // no castling from check
+        if(isSquareAttacked(square, BLACK)) return;
+
+        
+        if(whiteKingsideCastle && square==60 && getPiece(63)==WR) {
+            bool ok=true;
+            for(int sq : {61,62}) {
+                if(isSquareAttacked(sq, BLACK) || getPiece(sq)!=NONE) {
+                    ok=false; break;
+                }
+            }
+            if(ok) moves.emplace_back(p, 60, 62, false, false, true, false);
+        }
+
+        // queenside: check d1(59) & c1(58) for both attack+occupancy, b1(57) for occupancy only
+        if(whiteQueensideCastle && square==60 && getPiece(56)==WR) {
+            bool ok=true;
+            // d1 & c1 must be empty & safe
+            for(int sq : {59,58}) {
+                if(isSquareAttacked(sq, BLACK) || getPiece(sq)!=NONE) {
+                    ok=false; break;
+                }
+            }
+            // b1 need only be empty
+            if(ok && getPiece(57)!=NONE) ok=false;
+
+            if(ok) moves.emplace_back(p, 60, 58, 0,0, false, true);
+        }
+
+    } else {
+        if(isSquareAttacked(square, WHITE)) return;
+
+        
+        if(blackKingsideCastle && square==4 && getPiece(7)==BR) {
+            bool ok=true;
+            for(int sq : {5,6}) {
+                if(isSquareAttacked(sq, WHITE) || getPiece(sq)!=NONE) {
+                    ok=false; break;
+                }
+            }
+            if(ok) moves.emplace_back(p, 4, 6, 0,0, true, false);
+        }
+
+        // black queenside: d8(3) & c8(2) for attack+occupancy, b8(1) for occupancy
+        if(blackQueensideCastle && square==4 && getPiece(0)==BR) {
+            bool ok=true;
+            for(int sq : {3,2}) {
+                if(isSquareAttacked(sq, WHITE) || getPiece(sq)!=NONE) {
+                    ok=false; break;
+                }
+            }
+            if(ok && getPiece(1)!=NONE) ok=false;
+
+            if(ok) moves.emplace_back(p, 4, 2, 0,0, false, true);
+        }
+    }
+    // this was annoying
+
+}
+
+void Board::generateKnightMoves(int square, std::vector<Move>& moves, Piece p, Color color) const {
+    const int directions[8] = { -21, -19,-12, -8, 8, 12, 19, 21 };
+    int mailBoxIndex = MailBox::mailbox64[square];
+
+    for(int direction : directions) {
+            int newSquare = MailBox::mailbox[mailBoxIndex + direction];
+            if(newSquare == -1) continue;
+
+            Piece occupied = getPiece(newSquare);
+
+            if(occupied == NONE) {
+                Move move(p, square, newSquare);
+                moves.push_back(move);
+            }
+            else if(getPieceColor(occupied) == color) continue;
+            else {
+                Move move(p, square, newSquare, 0, true);
+                moves.push_back(move);
+                continue;
+            }
+    }
+}
+

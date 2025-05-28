@@ -11,15 +11,15 @@ int main() {
     for(int i = 0; i < 64; ++i) {
         b.setPiece(NONE, i);
     }
+    // b.sideToMove = BLACK;
 
-    ;
-    b.setPiece(WR, 27);
-    b.setPiece(WP, 19);
-    b.setPiece(WP, 26);
-    b.setPiece(WP, 28);
-    b.setPiece(WP, 35);
+    b.setPiece(WK, 60);
+    b.setPiece(WR, 63);
+
+    b.setPiece(BR, 7);
 
     b.print();
+
     std::vector<Move> moves = b.generateMoves();
     if(moves.empty()) {
         std::cout << "what the fuck";
