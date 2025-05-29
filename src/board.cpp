@@ -1,6 +1,9 @@
 #include "board.h"
 #include "mailbox.h"
 #include<iostream>
+#include <sstream>
+#include <string>
+#include <cctype>
 
 Board::Board() {
     // White Piece
@@ -30,6 +33,9 @@ Board::Board() {
     blackKingsideCastle = true;
     blackQueensideCastle = true;
 
+    whiteKingSquare = 60;
+    blackKingSquare = 4;
+
 }
 
 Piece Board::getPiece(int square) const {
@@ -38,6 +44,81 @@ Piece Board::getPiece(int square) const {
 
 void Board::setPiece(Piece p, int square) {
     squares[square] = p;
+}
+
+bool Board::setPositionFromFEN(const std::string& fen) {
+    // Clear the board first
+    for (int i = 0; i < 64; ++i) {
+        setPiece(NONE, i);
+    }
+    
+    std::istringstream ss(fen);
+    std::string token;
+    
+    // 1. Piece placement
+    if (!(ss >> token)) return false;
+    
+    int square = 0;
+    for (char c : token) {
+        if (c == '/') {
+            // Skip to the next rank
+            continue;
+        } else if (isdigit(c)) {
+            // Skip empty squares
+            square += (c - '0');
+        } else {
+            // Place a piece
+            Piece p = NONE;
+            switch (c) {
+                case 'P': p = WP; break;
+                case 'N': p = WN; break;
+                case 'B': p = WB; break;
+                case 'R': p = WR; break;
+                case 'Q': p = WQ; break;
+                case 'K': p = WK; break;
+                case 'p': p = BP; break;
+                case 'n': p = BN; break;
+                case 'b': p = BB; break;
+                case 'r': p = BR; break;
+                case 'q': p = BQ; break;
+                case 'k': p = BK; break;
+                default: return false; // Invalid character
+            }
+            
+            if (p != NONE) {
+                setPiece(p, square);
+                
+                // Track king positions
+                if (p == WK) whiteKingSquare = square;
+                if (p == BK) blackKingSquare = square;
+                
+                square++;
+            }
+        }
+    }
+    
+    // 2. Active color
+    if (!(ss >> token)) return false;
+    sideToMove = (token == "w") ? WHITE : BLACK;
+    
+    // 3. Castling availability
+    if (!(ss >> token)) return false;
+    whiteKingsideCastle = (token.find('K') != std::string::npos);
+    whiteQueensideCastle = (token.find('Q') != std::string::npos);
+    blackKingsideCastle = (token.find('k') != std::string::npos);
+    blackQueensideCastle = (token.find('q') != std::string::npos);
+    
+    // 4. En passant target square
+    if (!(ss >> token)) return false;
+    if (token == "-") {
+        enPassantSquare = -1;
+    } else {
+        int file = token[0] - 'a';
+        int rank = 8 - (token[1] - '0');
+        enPassantSquare = rank * 8 + file;
+    }
+    
+    return true;
 }
 
 void Board::print() const {
@@ -55,35 +136,85 @@ void Board::print() const {
 
 bool Board::isSquareAttacked(int square, Color opponentColor) const {
 
-    const int directions[8] = {-11, -10, -9, 1, 11, 10, 9, -1};
     int mailBoxIndex = MailBox::mailbox64[square];
-
-    for(int direction : directions) {
+    
+    const int rookDirections[4] = {-10, 1, 10, -1};
+    for(int direction : rookDirections) {
         for(int factor = 1; factor < 8; ++factor) {
             int newSquare = MailBox::mailbox[mailBoxIndex + direction*factor];
             if(newSquare == -1) break;
 
             Piece occupied = getPiece(newSquare);
-            if(occupied != NONE) {
-                Color c = getPieceColor(occupied);
-                if(c == opponentColor) {
+            if(occupied == NONE){
+                continue;
+            }
+            else if(occupied % 8 == 2 || occupied % 8 == 5) {
+                if(getPieceColor(occupied) == opponentColor) {
                     return true;
                 }
-                else {
-                    break;
+            }
+            break;
+        }
+    }
+
+    const int bishopDirections[4] = {-11, -9, 11, 9};
+    for(int direction : bishopDirections) {
+        for(int factor = 1; factor < 8; ++factor) {
+            int newSquare = MailBox::mailbox[mailBoxIndex + direction*factor];
+            if(newSquare == -1) break;
+
+            Piece occupied = getPiece(newSquare);
+            if(occupied == NONE){
+                continue;
+            }
+            else if(occupied % 8 == 4 || occupied % 8 == 5) {
+                if(getPieceColor(occupied) == opponentColor) {
+                    return true;
                 }
             }
+            break;
             
         }
     }
+
+    const int kingDirections[8] = {-10, 1, 10, -1, -11, -9, 11, 9};
+    for(int direction : kingDirections) {
+        int newSquare = MailBox::mailbox[mailBoxIndex + direction];
+        if(newSquare == -1) continue;
+
+        Piece occupied = getPiece(newSquare);
+        if(occupied % 8 == 6 && getPieceColor(occupied) == opponentColor) {
+            return true;
+        }
+        else {
+            continue;
+        }
+    }
+
+    if(opponentColor == BLACK) {
+        int leftSquare = MailBox::mailbox[mailBoxIndex - 11];
+        int rightSquare = MailBox::mailbox[mailBoxIndex - 9];
+
+        if(leftSquare != -1 && getPiece(leftSquare) == WP) return true;
+        if(rightSquare != -1 && getPiece(rightSquare) == WP) return true;
+    } 
+    else {
+        int leftSquare = MailBox::mailbox[mailBoxIndex + 9];
+        int rightSquare = MailBox::mailbox[mailBoxIndex + 11];
+
+        if(leftSquare != -1 && getPiece(leftSquare) == BP) return true;
+        if(rightSquare != -1 && getPiece(rightSquare) == BP) return true;
+    }
+
+
     const int knightDirections[8] = { -21, -19,-12, -8, 8, 12, 19, 21 };
     for(int direction : knightDirections) {
         int newSquare = MailBox::mailbox[mailBoxIndex + direction];
-        if(newSquare == -1) break;
+        if(newSquare == -1) continue;
         Piece occupied = getPiece(newSquare);
-        if(occupied != NONE) {
+        if(occupied % 8 == 3) {
             Color c = getPieceColor(occupied);
-            if(c == opponentColor) {
+            if(c == opponentColor ) {
                 return true;
             }
             else {
@@ -92,6 +223,198 @@ bool Board::isSquareAttacked(int square, Color opponentColor) const {
         }
     }
     return false;
+}
+
+bool Board::makeMove(const Move &move) {
+    Gamestate prevState = {
+        sideToMove, 
+        enPassantSquare,
+        whiteKingsideCastle,
+        whiteQueensideCastle,
+        blackKingsideCastle,
+        blackQueensideCastle,
+        whiteKingSquare,
+        blackKingSquare
+    };
+
+    enPassantSquare = -1;
+    
+    // Castle updates
+    if(move.isKingSideCastle) {
+        if(sideToMove == WHITE) {
+            setPiece(WR, 61);
+            setPiece(WK, 62);
+            setPiece(NONE, 60);
+            setPiece(NONE, 63);
+            whiteKingSquare = 62;
+            whiteKingsideCastle = false;
+            whiteQueensideCastle = false;
+        }
+        else {
+            setPiece(BR, 5);
+            setPiece(BK, 6);
+            setPiece(NONE, 4);
+            setPiece(NONE, 7);
+            blackKingSquare = 6;
+            blackKingsideCastle = false;
+            blackQueensideCastle = false;
+        }
+    }
+    else if(move.isQueenSideCastle) {
+        if(sideToMove == WHITE) {
+            setPiece(WR, 59);
+            setPiece(WK, 58);
+            setPiece(NONE, 60);
+            setPiece(NONE, 56);
+            whiteKingSquare = 58;
+            whiteKingsideCastle = false;
+            whiteQueensideCastle = false;
+        }
+        else {
+            setPiece(BR, 3);
+            setPiece(BK, 2);
+            setPiece(NONE, 4);
+            setPiece(NONE, 0);
+            blackKingSquare = 2;
+            blackKingsideCastle = false;
+            blackQueensideCastle = false;
+        }
+    }
+    else if(move.isEnPassant) { // en passant
+        setPiece(NONE, move.from);
+        setPiece(move.piece, move.to);
+
+        int capturedPawnSquare = move.to + (sideToMove == WHITE? 8 : -8);
+        setPiece(NONE, capturedPawnSquare);
+    }
+    else {
+        // normal moves and captures
+        if(move.piece == WP || move.piece == BP) {
+            if(abs(move.from - move.to) == 16) {
+                enPassantSquare = move.from + (sideToMove == WHITE? -8 : 8);
+            }
+
+            if(move.promotion) {
+                setPiece(NONE, move.from);
+                Piece promoteTo = sideToMove==WHITE? (Piece)move.promotion : (Piece)(move.promotion+8);
+                setPiece(promoteTo, move.to);
+            }
+            else {
+                setPiece(NONE, move.from);
+                setPiece(move.piece, move.to);
+            }
+        }
+        else {
+            setPiece(NONE, move.from);
+            setPiece(move.piece, move.to);
+        }
+
+        if (move.piece == WK) {
+            whiteKingsideCastle = false;
+            whiteQueensideCastle = false;
+            whiteKingSquare = move.to;
+        } else if (move.piece == BK) {
+            blackKingsideCastle = false;
+            blackQueensideCastle = false;
+            blackKingSquare = move.to;
+        } else if (move.piece == WR) {
+            if (move.from == 56) whiteQueensideCastle = false;
+            if (move.from == 63) whiteKingsideCastle = false;
+        } else if (move.piece == BR) {
+            if (move.from == 0) blackQueensideCastle = false;
+            if (move.from == 7) blackKingsideCastle = false;
+        }
+        if (move.capture) {
+            if (move.to == 56) whiteQueensideCastle = false;
+            if (move.to == 63) whiteKingsideCastle = false;
+            if (move.to == 0) blackQueensideCastle = false;
+            if (move.to == 7) blackKingsideCastle = false;
+        }
+    }
+    sideToMove = (sideToMove == WHITE)? BLACK : WHITE;
+
+    if(sideToMove == BLACK) {
+        if(isSquareAttacked(whiteKingSquare, BLACK)){
+            unmakeMove(move, prevState);
+            return false;
+        }
+    }
+    else {
+        if(isSquareAttacked(blackKingSquare, WHITE)) {
+            unmakeMove(move, prevState);
+            return false;
+        }
+    }
+    return true;
+}
+
+void Board::unmakeMove(const Move &move, const Gamestate &prevState) {
+
+    whiteKingsideCastle = prevState.whiteKingsideCastle;
+    whiteQueensideCastle = prevState.whiteQueensideCastle;
+    blackKingsideCastle = prevState.blackKingsideCastle;
+    blackQueensideCastle = prevState.blackQueensideCastle;
+    whiteKingSquare = prevState.whiteKingSquare;
+    blackKingSquare = prevState.blackKingSquare;
+    enPassantSquare = prevState.enPassantSquare;
+    sideToMove = (sideToMove == WHITE) ? BLACK : WHITE;
+
+
+    if (move.isKingSideCastle) {
+        if (sideToMove == WHITE) {
+            setPiece(WK, 60); 
+            setPiece(WR, 63); 
+            setPiece(NONE, 62); 
+            setPiece(NONE, 61);
+        } else {
+            setPiece(BK, 4);  
+            setPiece(BR, 7);  
+            setPiece(NONE, 6); 
+            setPiece(NONE, 5);
+        }
+    }
+    else if (move.isQueenSideCastle) {
+        if (sideToMove == WHITE) {
+            setPiece(WK, 60); 
+            setPiece(WR, 56); 
+            setPiece(NONE, 58); 
+            setPiece(NONE, 59);
+        } else {
+            setPiece(BK, 4);  
+            setPiece(BR, 0);  
+            setPiece(NONE, 2); 
+            setPiece(NONE, 3);
+        }
+    }
+    else if (move.isEnPassant) {
+        setPiece(move.piece, move.from);
+        setPiece(NONE, move.to);
+        
+        int capturedPawnSquare = move.to + (sideToMove == WHITE ? 8 : -8);
+        setPiece((sideToMove == WHITE) ? BP : WP, capturedPawnSquare);
+    }
+    else {
+        setPiece(move.piece, move.from);
+        if (move.promotion && move.capture) {
+
+            Piece capturedPiece = (Piece)move.capture;
+            setPiece(capturedPiece, move.to);
+
+        }
+        else if (move.promotion) {
+            setPiece(NONE, move.to);
+
+        } else if (move.capture) {
+
+            Piece capturedPiece = (Piece)move.capture;
+            setPiece(capturedPiece, move.to);
+
+        } else {
+
+            setPiece(NONE, move.to);
+
+        }
+    }
 }
 
 std::vector<Move> Board::generateMoves() const {
@@ -161,8 +484,21 @@ void Board::generatePawnMoves(int square, std::vector<Move> &moves, Piece p, Col
     if(newSquare != -1 && getPiece(newSquare) == NONE) {
         
         bool promotion = (newSquare >=0 && newSquare <= 7) || (newSquare >= 56 && newSquare <= 63);
-        Move move(p, square, newSquare, promotion, false);
-        moves.push_back(move);
+        if(promotion) {
+            Move move1(p, square, newSquare, 5);
+            Move move2(p, square, newSquare, 4);
+            Move move3(p, square, newSquare, 3);
+            Move move4(p, square, newSquare, 2);
+
+            moves.push_back(move1);
+            moves.push_back(move2);
+            moves.push_back(move3);
+            moves.push_back(move4);
+        }
+        else {
+            Move move(p, square, newSquare, 0);
+            moves.push_back(move);
+        }
     }
 
     
@@ -173,9 +509,16 @@ void Board::generatePawnMoves(int square, std::vector<Move> &moves, Piece p, Col
         Piece occupiedPiece = getPiece(newSquare);
         if(occupiedPiece != NONE && getPieceColor(occupiedPiece) != color) {
             bool promotion = (newSquare >=0 && newSquare <= 7) || (newSquare >= 56 && newSquare <= 63);
-            Move move(p, square, newSquare, promotion, true);
+            Move move(p, square, newSquare, promotion, occupiedPiece);
             moves.push_back(move);
         }
+
+        // if en passant is possible
+        if(enPassantSquare == newSquare) {
+            Move move(p, square, newSquare, 0, getPiece(square - 1), false, false, true);
+            moves.push_back(move);
+        }
+
     }
 
     // Right Capture
@@ -185,27 +528,40 @@ void Board::generatePawnMoves(int square, std::vector<Move> &moves, Piece p, Col
         Piece occupiedPiece = getPiece(newSquare);
         if(occupiedPiece != NONE && getPieceColor(occupiedPiece) != color) {
             bool promotion = (newSquare >=0 && newSquare <= 7) || (newSquare >= 56 && newSquare <= 63);
-            Move move(p, square, newSquare, promotion, true);
+            Move move(p, square, newSquare, promotion, occupiedPiece);
+            moves.push_back(move);
+        }
+
+        if(enPassantSquare == newSquare) {
+            Move move(p, square, newSquare, 0, getPiece(square + 1), false, false, true);
             moves.push_back(move);
         }
     }
 
     // Forward 2 step movement
     if(color == WHITE && square >= 48 && square <= 55) {
+        int intermediateSquare = square - 8;  // One square forward
         newSquare = MailBox::mailbox[mailboxIndex + moveDir + moveDir];
-        if(getPiece(newSquare) == NONE) {
-            Move move(p, square, newSquare, false, false);
+        
+        // Check BOTH squares are empty
+        if(newSquare != -1 && getPiece(intermediateSquare) == NONE && getPiece(newSquare) == NONE) {
+            Move move(p, square, newSquare, 0, 0);
             moves.push_back(move);
         }
     }
 
     if(color == BLACK && square >= 8 && square <= 15) {
+        int intermediateSquare = square + 8;  // One square forward
         newSquare = MailBox::mailbox[mailboxIndex + moveDir + moveDir];
-        if(getPiece(newSquare) == NONE) {
-            Move move(p, square, newSquare, false, false);
+        
+        // Check BOTH squares are empty
+        if(newSquare != -1 && getPiece(intermediateSquare) == NONE && getPiece(newSquare) == NONE) {
+            Move move(p, square, newSquare, 0, 0);
             moves.push_back(move);
         }
     }
+
+    
 }
 
 void Board::generateRookMoves(int square, std::vector<Move> &moves, Piece p, Color color) const {
@@ -227,7 +583,7 @@ void Board::generateRookMoves(int square, std::vector<Move> &moves, Piece p, Col
             }
             else if(getPieceColor(occupied) == color) break;
             else {
-                Move move(p, square, newSquare, 0, true);
+                Move move(p, square, newSquare, 0, occupied);
                 moves.push_back(move);
                 break;
             }
@@ -252,7 +608,7 @@ void Board::generateBishopMoves(int square, std::vector<Move>& moves, Piece p, C
             }
             else if(getPieceColor(occupied) == color) break;
             else {
-                Move move(p, square, newSquare, 0, true);
+                Move move(p, square, newSquare, 0, occupied);
                 moves.push_back(move);
                 break;
             }
@@ -277,7 +633,7 @@ void Board::generateQueenMoves(int square, std::vector<Move>& moves, Piece p, Co
             }
             else if(getPieceColor(occupied) == color) break;
             else {
-                Move move(p, square, newSquare, 0, true);
+                Move move(p, square, newSquare, 0, occupied);
                 moves.push_back(move);
                 break;
             }
@@ -301,7 +657,7 @@ void Board::generateKingMoves(int square, std::vector<Move>& moves, Piece p, Col
             }
             else if(getPieceColor(occupied) == color) continue;
             else {
-                Move move(p, square, newSquare, 0, true);
+                Move move(p, square, newSquare, 0, occupied);
                 moves.push_back(move);
                 continue;
             }
@@ -386,7 +742,7 @@ void Board::generateKnightMoves(int square, std::vector<Move>& moves, Piece p, C
             }
             else if(getPieceColor(occupied) == color) continue;
             else {
-                Move move(p, square, newSquare, 0, true);
+                Move move(p, square, newSquare, 0, occupied);
                 moves.push_back(move);
                 continue;
             }

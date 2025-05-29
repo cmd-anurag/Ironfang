@@ -2,24 +2,35 @@
 #define BOARD_H
 
 #include "types.h"
+#include "Gamestate.h"
 #include "move.h"
 #include <vector>
 
 class Board {
     public:
         Color sideToMove;
+        int enPassantSquare = -1;
+
         bool whiteKingsideCastle;
         bool whiteQueensideCastle;
         bool blackKingsideCastle;
         bool blackQueensideCastle;
+
+        int whiteKingSquare;
+        int blackKingSquare;
 
 
         Board();
         void print() const;
         Piece getPiece(int square) const;
         void setPiece(Piece p, int square);
+        bool setPositionFromFEN(const std::string& fen);
         std::vector<Move> generateMoves() const;
         bool isSquareAttacked(int square, Color opponentColor) const;
+
+        bool makeMove(const Move &move);
+        void unmakeMove(const Move &move, const Gamestate &prevState);
+
 
     private:
         Piece squares[64];
