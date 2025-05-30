@@ -6,6 +6,8 @@
 #include "move.h"
 #include <vector>
 
+class Evaluation;
+
 class Board {
     public:
         Color sideToMove;
@@ -31,7 +33,7 @@ class Board {
 
         bool makeMove(const Move &move);
         void unmakeMove(const Move &move, const Gamestate &prevState);
-
+        friend class Evaluation;
 
     private:
         Piece squares[64];
