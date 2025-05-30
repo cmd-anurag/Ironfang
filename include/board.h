@@ -21,6 +21,7 @@ class Board {
 
 
         Board();
+        void setStartPosition();
         void print() const;
         Piece getPiece(int square) const;
         void setPiece(Piece p, int square);

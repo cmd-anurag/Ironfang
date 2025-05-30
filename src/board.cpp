@@ -6,6 +6,10 @@
 #include <cctype>
 
 Board::Board() {
+    setStartPosition();
+}
+
+void Board::setStartPosition() {
     // White Piece
     squares[56] = WR; squares[57] = WN; squares[58] = WB; squares[59] = WQ; squares[60] = WK;
     squares[61] = WB; squares[62] = WN; squares[63] = WR;
@@ -35,7 +39,6 @@ Board::Board() {
 
     whiteKingSquare = 60;
     blackKingSquare = 4;
-
 }
 
 Piece Board::getPiece(int square) const {
@@ -195,15 +198,15 @@ bool Board::isSquareAttacked(int square, Color opponentColor) const {
         int leftSquare = MailBox::mailbox[mailBoxIndex - 11];
         int rightSquare = MailBox::mailbox[mailBoxIndex - 9];
 
-        if(leftSquare != -1 && getPiece(leftSquare) == WP) return true;
-        if(rightSquare != -1 && getPiece(rightSquare) == WP) return true;
+        if(leftSquare != -1 && getPiece(leftSquare) == BP) return true;
+        if(rightSquare != -1 && getPiece(rightSquare) == BP) return true;
     } 
     else {
         int leftSquare = MailBox::mailbox[mailBoxIndex + 9];
         int rightSquare = MailBox::mailbox[mailBoxIndex + 11];
 
-        if(leftSquare != -1 && getPiece(leftSquare) == BP) return true;
-        if(rightSquare != -1 && getPiece(rightSquare) == BP) return true;
+        if(leftSquare != -1 && getPiece(leftSquare) == WP) return true;
+        if(rightSquare != -1 && getPiece(rightSquare) == WP) return true;
     }
 
 
@@ -291,10 +294,13 @@ bool Board::makeMove(const Move &move) {
         // normal moves and captures
         if(move.piece == WP || move.piece == BP) {
             if(abs(move.from - move.to) == 16) {
+                
                 enPassantSquare = move.from + (sideToMove == WHITE? -8 : 8);
+                
             }
 
             if(move.promotion) {
+                if(move.capture) setPiece(NONE, move.to);
                 setPiece(NONE, move.from);
                 Piece promoteTo = sideToMove==WHITE? (Piece)move.promotion : (Piece)(move.promotion+8);
                 setPiece(promoteTo, move.to);
@@ -335,6 +341,7 @@ bool Board::makeMove(const Move &move) {
 
     if(sideToMove == BLACK) {
         if(isSquareAttacked(whiteKingSquare, BLACK)){
+           
             unmakeMove(move, prevState);
             return false;
         }
@@ -503,14 +510,27 @@ void Board::generatePawnMoves(int square, std::vector<Move> &moves, Piece p, Col
 
     
 
-    // Left Capture
+    // Left Capture - fix this shit
     newSquare = MailBox::mailbox[mailboxIndex + leftCapture];
     if(newSquare != -1) {
         Piece occupiedPiece = getPiece(newSquare);
+        bool promotion = (newSquare >=0 && newSquare <= 7) || (newSquare >= 56 && newSquare <= 63);
+
         if(occupiedPiece != NONE && getPieceColor(occupiedPiece) != color) {
-            bool promotion = (newSquare >=0 && newSquare <= 7) || (newSquare >= 56 && newSquare <= 63);
-            Move move(p, square, newSquare, promotion, occupiedPiece);
-            moves.push_back(move);
+            if(promotion) {
+                Move move1(p, square, newSquare, 5, occupiedPiece);
+                Move move2(p, square, newSquare, 4, occupiedPiece);
+                Move move3(p, square, newSquare, 3, occupiedPiece);
+                Move move4(p, square, newSquare, 2, occupiedPiece);
+
+                moves.push_back(move1);
+                moves.push_back(move2);
+                moves.push_back(move3);
+                moves.push_back(move4);
+            } else {
+                Move move(p, square, newSquare, promotion, occupiedPiece);
+                moves.push_back(move);
+            }
         }
 
         // if en passant is possible
@@ -526,10 +546,23 @@ void Board::generatePawnMoves(int square, std::vector<Move> &moves, Piece p, Col
     newSquare = MailBox::mailbox[mailboxIndex + rightCapture];
     if(newSquare != -1) {
         Piece occupiedPiece = getPiece(newSquare);
+        bool promotion = (newSquare >=0 && newSquare <= 7) || (newSquare >= 56 && newSquare <= 63);
+
         if(occupiedPiece != NONE && getPieceColor(occupiedPiece) != color) {
-            bool promotion = (newSquare >=0 && newSquare <= 7) || (newSquare >= 56 && newSquare <= 63);
-            Move move(p, square, newSquare, promotion, occupiedPiece);
-            moves.push_back(move);
+           if(promotion) {
+                Move move1(p, square, newSquare, 5, occupiedPiece);
+                Move move2(p, square, newSquare, 4, occupiedPiece);
+                Move move3(p, square, newSquare, 3, occupiedPiece);
+                Move move4(p, square, newSquare, 2, occupiedPiece);
+
+                moves.push_back(move1);
+                moves.push_back(move2);
+                moves.push_back(move3);
+                moves.push_back(move4);
+            } else {
+                Move move(p, square, newSquare, promotion, occupiedPiece);
+                moves.push_back(move);
+            }
         }
 
         if(enPassantSquare == newSquare) {

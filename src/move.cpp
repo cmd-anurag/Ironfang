@@ -1,4 +1,5 @@
 #include "move.h"
+#include "board.h"
 #include "types.h"
 #include <string>
 
@@ -83,4 +84,47 @@ std::string moveToUCI(Move move) {
     }
     
     return result;
+}
+
+Move uciToMove(const std::string& uci, Board& board) {
+    std::vector<Move> moves = board.generateMoves();
+
+    int fromFile = uci[0] - 'a';
+    int fromRank = 7 - (uci[1] - '1');
+    int from     = fromRank * 8 + fromFile;
+
+    int toFile   = uci[2] - 'a';
+    int toRank   = 7 - (uci[3] - '1');
+    int to       = toRank * 8 + toFile;
+
+    char promoChar = (uci.length() == 5) ? uci[4] : '\0';
+
+    for (const Move& move : moves) {
+        if (move.from == from && move.to == to) {
+            if (promoChar == '\0' || (
+                (promoChar == 'q' && move.promotion == WQ) ||
+                (promoChar == 'r' && move.promotion == WR)  ||
+                (promoChar == 'b' && move.promotion == WB)||
+                (promoChar == 'n' && move.promotion == WN))) {
+                return move;
+            }
+        }
+    }
+
+    return Move{NONE, -1, -1, 0, 0};  // shouldn't happen unless intentional 
+}
+
+
+// i was getting tired of manually printing move information
+std::ostream& operator<<(std::ostream& os, const Move &move) {
+    os << "Move Details:\n";
+    os << "Piece Moved: " << move.piece << "\n";
+    os << "From: " << move.from << "\n";
+    os << "To: " << move.to << "\n";
+    os << "Captured Piece: " << move.capture << "\n";
+    os << "Promoted Piece: " << move.promotion << "\n";
+    os << "Is En Passant: " << move.isEnPassant << "\n";
+    os << "Is KCastling: " << move.isKingSideCastle << "\n";
+    os << "Is QCastling: " << move.isQueenSideCastle << "\n";
+    return os;
 }

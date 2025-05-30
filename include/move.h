@@ -1,7 +1,10 @@
 #ifndef MOVE_H
 #define MOVE_H
 #include <string>
+#include <iostream>
 #include "types.h"
+
+class Board;
 
 struct Move
 {
@@ -19,5 +22,8 @@ struct Move
 };
 
 std::string moveToAlgrebraic(Move move);
+std::string moveToUCI(Move move);
+Move uciToMove(const std::string& uci, Board& board);
+std::ostream& operator<<(std::ostream& os, const Move &move);
 
 #endif
