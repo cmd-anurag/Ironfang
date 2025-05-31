@@ -1,4 +1,5 @@
 #include "board.h"
+#include "evaluate.h"
 #include "mailbox.h"
 #include "uci.h"
 #include <iostream>
@@ -10,7 +11,7 @@ int main() {
     uciLoop();
     
     // Board b;
-    // if(b.setPositionFromFEN("r1bqk2r/2pp1ppp/p1n2n2/1pb1p3/4P3/1BPP1N2/PP3PPP/RNBQK2R b KQkq - 1 7")) {
+    // if(b.setPositionFromFEN("2rqr1k1/4bpp1/p2p1n1p/1p6/3QP3/1b4NP/PP3PP1/R1B1R1K1 w - - 0 20")) {
     //     std::cout << "Loaded Successfully\n";
     // }
     // else {
@@ -19,6 +20,10 @@ int main() {
     // }
     
     // b.print();
+
+    // int evaluation = Evaluation::evaluate(b);
+    // std::cout << evaluation << "\n";
+
     // std::vector<Move> moves = b.generateMoves();
     // std::vector<Move> legalMoves;
 

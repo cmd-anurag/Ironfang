@@ -33,6 +33,7 @@ class Board {
 
         bool makeMove(const Move &move);
         void unmakeMove(const Move &move, const Gamestate &prevState);
+        bool tryMove(const Move& move);
         friend class Evaluation;
 
     private:

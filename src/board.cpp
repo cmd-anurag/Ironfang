@@ -424,6 +424,23 @@ void Board::unmakeMove(const Move &move, const Gamestate &prevState) {
     }
 }
 
+bool Board::tryMove(const Move& move) {
+    Gamestate prevdata = {
+        sideToMove, 
+        enPassantSquare,
+        whiteKingsideCastle,
+        whiteQueensideCastle,
+        blackKingsideCastle,
+        blackQueensideCastle,
+        whiteKingSquare,
+        blackKingSquare
+    };
+
+    if(!makeMove(move)) return false;
+    unmakeMove(move, prevdata);
+    return true;
+}
+
 std::vector<Move> Board::generateMoves() const {
     std::vector<Move> moves;
 
@@ -510,7 +527,7 @@ void Board::generatePawnMoves(int square, std::vector<Move> &moves, Piece p, Col
 
     
 
-    // Left Capture - fix this shit
+    // Left Capture
     newSquare = MailBox::mailbox[mailboxIndex + leftCapture];
     if(newSquare != -1) {
         Piece occupiedPiece = getPiece(newSquare);
@@ -532,10 +549,10 @@ void Board::generatePawnMoves(int square, std::vector<Move> &moves, Piece p, Col
                 moves.push_back(move);
             }
         }
-
-        // if en passant is possible
+        
         if(enPassantSquare == newSquare) {
-            Move move(p, square, newSquare, 0, getPiece(square - 1), false, false, true);
+            int capturedPawnSquare = newSquare + (color == WHITE ? 8 : -8);
+            Move move(p, square, newSquare, 0, getPiece(capturedPawnSquare), false, false, true);
             moves.push_back(move);
         }
 
@@ -566,7 +583,8 @@ void Board::generatePawnMoves(int square, std::vector<Move> &moves, Piece p, Col
         }
 
         if(enPassantSquare == newSquare) {
-            Move move(p, square, newSquare, 0, getPiece(square + 1), false, false, true);
+            int capturedPawnSquare = newSquare + (color == WHITE ? 8 : -8);
+            Move move(p, square, newSquare, 0, getPiece(capturedPawnSquare), false, false, true);
             moves.push_back(move);
         }
     }

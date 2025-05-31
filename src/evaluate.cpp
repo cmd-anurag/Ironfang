@@ -17,5 +17,5 @@ int Evaluation::evaluate(const Board &board) {
         }
     }
 
-    return score;
+    return (board.sideToMove == WHITE) ? score : -score;
 }

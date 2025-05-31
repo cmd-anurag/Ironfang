@@ -5,6 +5,7 @@
 #include <cstdlib>  // for rand()
 #include <ctime>
 #include "board.h"
+#include "search.h"
 
 void uciLoop() {
     srand(time(NULL));
@@ -16,7 +17,7 @@ void uciLoop() {
         iss >> token;
 
         if(token == "uci") {
-            std::cout << "id name Ironfangv1\n";
+            std::cout << "id name IronfangPureAlphaBetav2\n";
             std::cout << "id author dark\n";
             std::cout << "uciok\n";
         }
@@ -46,40 +47,15 @@ void uciLoop() {
             }
         }
         else if(token == "go") {
-            
-            std::vector<Move> moves = board.generateMoves();
-            if(!moves.empty()) {
-                Move randomMove = moves.at(0);
-                while(true) {
-                    int index = rand() % moves.size();
-                    randomMove = moves.at(index);
-
-                    Gamestate prevdata = {
-                        board.sideToMove, 
-                        board.enPassantSquare,
-                        board.whiteKingsideCastle,
-                        board.whiteQueensideCastle,
-                        board.blackKingsideCastle,
-                        board.blackQueensideCastle,
-                        board.whiteKingSquare,
-                        board.blackKingSquare
-                    };
-
-                    bool ok = board.makeMove(randomMove);
-                    if(ok) {
-                        board.unmakeMove(randomMove, prevdata);
-                        std::cout << "bestmove " << moveToUCI(randomMove) << "\n";
-                        break;
-                    }
-                }
-            }
-            else {
-                std::cout << "bestmove 0000\n"; // No legal move
+            Move bestMove = Search::findBestMove(board, 5);
+            if (bestMove.from == -1) {
+                std::cout << "bestmove 0000\n";
+            } else {
+                std::cout << "bestmove " << moveToUCI(bestMove) << "\n";
             }
         }
         else if (token == "quit") {
             break;
         }
     }
-
 }
