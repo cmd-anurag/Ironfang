@@ -3,6 +3,7 @@
 
 #include "board.h"
 
+constexpr int MAX_DEPTH = 6;
 
 class Search {
     public:

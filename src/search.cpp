@@ -1,9 +1,16 @@
 // search.cpp
 #include "search.h"
 #include "evaluate.h"
+#include <cstdint>
+#include <algorithm>
+#include <array>
 
 constexpr int INF = 1000000;
-constexpr int MAX_DEPTH = 5;
+
+std::vector<std::vector<Move>> killerMoves(MAX_DEPTH, std::vector<Move>(2, Move(NONE, -1, -1)));
+std::array<std::array<int, 64>, 64> historyHeuristics{};
+
+uint64_t nodeCount = 0;
 
 Move Search::findBestMove(Board& board, int depth) {
     std::vector<Move> moves = board.generateMoves();
@@ -60,11 +67,15 @@ Move Search::findBestMove(Board& board, int depth) {
         return Move{NONE, -1, -1 };
     }
 
+    std::cerr << "Nodes searched: " << nodeCount;
     return bestMove;
+
 }
 
 int Search::minimaxAlphaBeta(Board& board, int depth, int alpha, int beta) {
-    
+
+    ++nodeCount; // an efficiency metric
+
     if (depth == 0) {
         return Evaluation::evaluate(board);
     }
@@ -82,6 +93,34 @@ int Search::minimaxAlphaBeta(Board& board, int depth, int alpha, int beta) {
         }
         return 0; // stalemate
     }
+
+    // Move Ordering
+    for(Move &move : moves) {
+        int score = 0;
+
+        if(move.capture) {
+            score += 1000 + (Evaluation::pieceValue[move.capture] * 10 - Evaluation::pieceValue[move.piece]);
+        }
+
+        Color c = getPieceColor(move.piece);
+        int targetKingSquare = c == BLACK? board.whiteKingSquare : board.blackKingSquare;
+        if(board.tryMove(move) && board.isSquareAttacked(targetKingSquare, c)) {
+            score += 500;
+        }
+
+        if(move == killerMoves[depth][0]) score += 800;
+        if(move == killerMoves[depth][1]) score += 700;
+
+        score += historyHeuristics[move.from][move.to];
+        // so much dynamic programming here oof
+
+        move.heuristicScore = score;
+    }
+
+    // sort it in descending
+    std::sort(moves.begin(), moves.end(), [](const Move &m1, const Move &m2) {
+        return m1.heuristicScore > m2.heuristicScore;
+    });
 
     bool foundLegalMove = false;
 
@@ -105,10 +144,23 @@ int Search::minimaxAlphaBeta(Board& board, int depth, int alpha, int beta) {
         int score = -minimaxAlphaBeta(board, depth - 1, -beta, -alpha);
         board.unmakeMove(move, prevdata);
 
+        // Beta cutoff
         if (score >= beta) {
-            // Beta cutoff
+        
+            // record KILLER moves here (nice name)
+            if(!move.capture && !(move == killerMoves[depth][0])) {
+                killerMoves[depth][1] = killerMoves[depth][0];
+                killerMoves[depth][0] = move;
+            }
+
+            // record in history heuristics
+            if(!move.capture) {
+                historyHeuristics[move.from][move.to] += depth * depth; // i'll try favoring deeper nodes
+            }
+
             return beta;
         }
+
         if (score > alpha) {
             alpha = score;
         }

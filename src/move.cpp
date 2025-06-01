@@ -128,3 +128,16 @@ std::ostream& operator<<(std::ostream& os, const Move &move) {
     os << "Is QCastling: " << move.isQueenSideCastle << "\n";
     return os;
 }
+
+bool operator==(const Move &lhs, const Move &rhs)
+{
+    return 
+    lhs.piece               == rhs.piece && 
+    lhs.from                == rhs.from && 
+    lhs.to                  == rhs.to &&
+    lhs.promotion           == rhs.promotion &&
+    lhs.capture             == rhs.capture &&
+    lhs.isKingSideCastle    == rhs.isKingSideCastle &&
+    lhs.isQueenSideCastle   == rhs.isQueenSideCastle &&
+    lhs.isEnPassant         == rhs.isEnPassant;
+}

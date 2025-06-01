@@ -17,7 +17,7 @@ void uciLoop() {
         iss >> token;
 
         if(token == "uci") {
-            std::cout << "id name IronfangPureAlphaBetav2\n";
+            std::cout << "id name IronfangMoveOrderingv4\n";
             std::cout << "id author dark\n";
             std::cout << "uciok\n";
         }
@@ -47,7 +47,7 @@ void uciLoop() {
             }
         }
         else if(token == "go") {
-            Move bestMove = Search::findBestMove(board, 5);
+            Move bestMove = Search::findBestMove(board, MAX_DEPTH);
             if (bestMove.from == -1) {
                 std::cout << "bestmove 0000\n";
             } else {
