@@ -6,7 +6,6 @@
 #include <string>
 #include <cctype>
 #include <cstdint>
-#include <fstream>
 
 Board::Board() {
     initZobrist();  // Initialzie the zobrist tables

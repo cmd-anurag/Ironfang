@@ -6,12 +6,15 @@
 #include "zobrist.h"
 #include <iostream>
 #include <vector>
-#include <assert.h>
 
 
 int main() {
 
-    uciLoop();
+    // uciLoop();
+    Board b;
+    b.setPositionFromFEN("7k/4R3/3p1r2/4p2p/4P3/1Q3N2/4KPq1/8 b - - 3 45");
+    Search::findBestMove(b, 7);
+    // std::cout << '\n' << bestMove << "\n";
     
     // Board b;
     // for(int i = 0; i < 64; ++i) {

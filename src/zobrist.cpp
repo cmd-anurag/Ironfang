@@ -29,7 +29,7 @@ void initZobrist() {
 
 }
 
-uint64_t generateZobristHashKey(Board b)
+uint64_t generateZobristHashKey(Board &b)
 {
     uint64_t key = 0;
 

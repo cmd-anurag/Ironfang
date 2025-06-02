@@ -9,7 +9,7 @@ extern uint64_t zobristEnPassant[8]; // a-h
 extern uint64_t zobristBlackToMove;
 
 void initZobrist();
-uint64_t generateZobristHashKey(Board b);
+uint64_t generateZobristHashKey(Board &b);
 
 inline int pieceToZobristIndex(Piece p) {
     if (p == NONE) return -1;

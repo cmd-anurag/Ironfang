@@ -2,7 +2,7 @@
 #include "search.h"
 #include "evaluate.h"
 #include "zobrist.h"
-#include <fstream>
+#include "tt.h"
 #include <cstdint>
 #include <algorithm>
 #include <array>
@@ -11,86 +11,113 @@ constexpr int INF = 1000000;
 
 std::vector<std::vector<Move>> killerMoves(MAX_DEPTH, std::vector<Move>(2, Move(NONE, -1, -1)));
 std::array<std::array<int, 64>, 64> historyHeuristics{};
+TranspositionTable TT;
 
 uint64_t nodeCount = 0;
 
-Move Search::findBestMove(Board& board, int depth) {
-    std::vector<Move> moves = board.generateMoves();
+Move Search::findBestMove(Board& board, int maxDepth) {
+    Move bestMove{NONE, -1, -1};
+    nodeCount = 0;
+    TT.hitCount = 0;
+    TT.lookupCount = 0;
 
-    // no pseudo‐legal moves at all, immediate stalemate or checkmate.
-    if (moves.empty()) {
-        return Move{NONE, -1, -1 };
-    }
-
-    Move bestMove{NONE, -1, -1 };
-    int   bestScore = -INF;
-    int   alpha     = -INF;
-    int   beta      = INF;
-    bool  foundLegalMove = false;
-
-    for (const Move& move : moves) {
-        // for unmaking the move
-        Gamestate prevdata = {
-            board.sideToMove,
-            board.enPassantSquare,
-            board.whiteKingsideCastle,
-            board.whiteQueensideCastle,
-            board.blackKingsideCastle,
-            board.blackQueensideCastle,
-            board.whiteKingSquare,
-            board.blackKingSquare,
-            board.zobristKey
-        };
-
-        // skip illegal moves
-        if (!board.makeMove(move)) {
-            continue;
+    // Iterative Deepening Search from depth 1 to maxDepth
+    for (int currentDepth = 1; currentDepth <= maxDepth; currentDepth++) {
+        int alpha = -INF;
+        int beta = INF;
+        int bestScore = -INF;
+        bool foundLegalMove = false;
+        
+        std::vector<Move> moves = board.generateMoves();
+        
+        if (moves.empty()) {
+            return Move{NONE, -1, -1};
+        }
+        
+        // If engine gets a best move from previous iteration, search it first
+        if (!(bestMove == Move{NONE, -1, -1})) {
+            auto it = std::find(moves.begin(), moves.end(), bestMove);
+            if (it != moves.end()) {
+                std::swap(*it, moves.front());
+            }
         }
 
-        // search at depth - 1
-        int score = -minimaxAlphaBeta(board, depth - 1, -beta, -alpha);
+        for (const Move& move : moves) {
+            Gamestate prevdata = {
+                board.sideToMove,
+                board.enPassantSquare,
+                board.whiteKingsideCastle,
+                board.whiteQueensideCastle,
+                board.blackKingsideCastle,
+                board.blackQueensideCastle,
+                board.whiteKingSquare,
+                board.blackKingSquare,
+                board.zobristKey
+            };
 
-        // restore old state exactly as it was before the recursive call
-        board.unmakeMove(move, prevdata);
+            if (!board.makeMove(move)) {
+                continue;
+            }
 
-        // if its the first legal move, initialize both bestScore and alpha.
-        if (!foundLegalMove || score > bestScore) {
-            bestScore      = score;
-            bestMove       = move;
-            foundLegalMove = true;
+            int score = -minimaxAlphaBeta(board, currentDepth - 1, -beta, -alpha);
+            board.unmakeMove(move, prevdata);
+
+            if (!foundLegalMove || score > bestScore) {
+                bestScore = score;
+                bestMove = move;
+                foundLegalMove = true;
+            }
+            
+            if (score > alpha) {
+                alpha = score;
+            }
         }
-        if (score > alpha) {
-            alpha = score;
+
+        if (!foundLegalMove) {
+            return Move{NONE, -1, -1};
         }
+        
+        // Display info after each depth iteration
+        // double hitRate = (TT.lookupCount == 0) ? 0.0 : 
+        //     (100.0 * double(TT.hitCount) / double(TT.lookupCount));
+            
+        // std::cerr << "Depth " << currentDepth 
+        //           << " score: " << bestScore 
+        //           << " nodes: " << nodeCount
+        //           << " hit rate: " << hitRate << "%" << std::endl << std::endl;
     }
 
-    // no move ever passed makeMove() cause all pseudo‐legal moves were actually illegal,
-    // return sentinel “noMove,” which UCI will interpret as “0000”.
-    if (!foundLegalMove) {
-        return Move{NONE, -1, -1 };
-    }
+    // Final statistics
+    std::cerr << "Nodes searched: " << nodeCount << '\n';
+    double hitRate = (TT.lookupCount == 0) ? 0.0 : 
+                  (100.0 * double(TT.hitCount) / double(TT.lookupCount));
+    std::cerr << "TT lookups: " << TT.lookupCount
+              << "  hits: " << TT.hitCount
+              << "  hit rate: " << hitRate << "%" << std::endl;
 
-    std::cerr << "Nodes searched: " << nodeCount;
-    // a small test for zobrist hashing
-    // uint64_t computed = generateZobristHashKey(board);
-    // if(computed != board.zobristKey) {
-    //     std::ofstream debugLog("zobrist_debug.txt", std::ios::app);
-    //     debugLog << "Zobrist mismatch at move: " << bestMove << "\n";
-    //     debugLog << "Incremental: " << board.zobristKey << "\n";
-    //     debugLog << "Full recomputed: " << computed << "\n";
-    //     std::cout << "bestmove 0000" << std::endl;
-    //     std::exit(0);
-    // }
+    std::cerr << "Total Store Attempts: " << TT.totalStoreAttempts << "\n";
+    std::cerr << "Actual Stores:        " << TT.actualStores << "\n";
+    std::cerr << "Overwritten Entries:  " << TT.overwritten << "\n";
+    std::cerr << "Currently Occupied:   " << TT.countOccupied() << "\n";
+    std::cerr << "TT Utilization:       " << (100.0 * TT.countOccupied() / TT_SIZE) << "%\n";
+
     return bestMove;
-
 }
 
 int Search::minimaxAlphaBeta(Board& board, int depth, int alpha, int beta) {
-
     ++nodeCount; // an efficiency metric
 
+    // before doing anything check T-table
+    Move tempMove = Move(NONE, -1, -1);
+    int tempEval;
+    if(TT.probe(board.zobristKey, depth, alpha, beta, tempEval, tempMove)) {
+        return tempEval;
+    }
+
     if (depth == 0) {
-        return Evaluation::evaluate(board);
+        int eval = Evaluation::evaluate(board);
+        TT.store(board.zobristKey, 0, eval, TT_EXACT, Move(NONE, -1, -1));
+        return eval;
     }
 
     std::vector<Move> moves = board.generateMoves();
@@ -110,6 +137,10 @@ int Search::minimaxAlphaBeta(Board& board, int depth, int alpha, int beta) {
     // Move Ordering
     for(Move &move : moves) {
         int score = 0;
+        
+        // if(move == tempMove) {
+        //     score += 0;
+        // }
 
         if(move.capture) {
             score += 1000 + (Evaluation::pieceValue[move.capture] * 10 - Evaluation::pieceValue[move.piece]);
@@ -136,6 +167,9 @@ int Search::minimaxAlphaBeta(Board& board, int depth, int alpha, int beta) {
     });
 
     bool foundLegalMove = false;
+
+    int originalAlpha = alpha;
+    Move bestMove(NONE, -1, -1);
 
     for (const Move& move : moves) {
         Gamestate prevdata = {
@@ -172,11 +206,15 @@ int Search::minimaxAlphaBeta(Board& board, int depth, int alpha, int beta) {
                 historyHeuristics[move.from][move.to] += depth * depth; // i'll try favoring deeper nodes
             }
 
+            // record a lower bound entry in TT
+            TT.store(board.zobristKey,depth, beta, TT_LOWER, move);
+
             return beta;
         }
 
         if (score > alpha) {
             alpha = score;
+            bestMove = move;
         }
     }
 
@@ -187,13 +225,24 @@ int Search::minimaxAlphaBeta(Board& board, int depth, int alpha, int beta) {
                        : board.blackKingSquare;
         Color opp = (board.sideToMove == WHITE) ? BLACK : WHITE;
 
-        if (board.isSquareAttacked(kingSq, opp)) {
-            // Checkmate
-            return -INF + (MAX_DEPTH - depth);
-        }
-        // Stalemate
-        return 0;
+        int eval = board.isSquareAttacked(kingSq, opp)
+        ? -INF + (MAX_DEPTH - depth)  // checkmate
+        : 0;                           // stalemate
+
+        TT.store(board.zobristKey, depth, eval, TT_EXACT, Move(NONE, -1, -1));
+
+        return eval;
     }
+
+    TT_FLAG flag;
+    if(alpha <= originalAlpha) {
+        flag = TT_UPPER;
+    }
+    else {
+        flag = TT_EXACT;
+    }
+
+    TT.store(board.zobristKey, depth, alpha, flag, bestMove);
 
     return alpha;
 }
