@@ -1,6 +1,8 @@
 // search.cpp
 #include "search.h"
 #include "evaluate.h"
+#include "zobrist.h"
+#include <fstream>
 #include <cstdint>
 #include <algorithm>
 #include <array>
@@ -36,7 +38,8 @@ Move Search::findBestMove(Board& board, int depth) {
             board.blackKingsideCastle,
             board.blackQueensideCastle,
             board.whiteKingSquare,
-            board.blackKingSquare
+            board.blackKingSquare,
+            board.zobristKey
         };
 
         // skip illegal moves
@@ -68,6 +71,16 @@ Move Search::findBestMove(Board& board, int depth) {
     }
 
     std::cerr << "Nodes searched: " << nodeCount;
+    // a small test for zobrist hashing
+    // uint64_t computed = generateZobristHashKey(board);
+    // if(computed != board.zobristKey) {
+    //     std::ofstream debugLog("zobrist_debug.txt", std::ios::app);
+    //     debugLog << "Zobrist mismatch at move: " << bestMove << "\n";
+    //     debugLog << "Incremental: " << board.zobristKey << "\n";
+    //     debugLog << "Full recomputed: " << computed << "\n";
+    //     std::cout << "bestmove 0000" << std::endl;
+    //     std::exit(0);
+    // }
     return bestMove;
 
 }
@@ -133,7 +146,8 @@ int Search::minimaxAlphaBeta(Board& board, int depth, int alpha, int beta) {
             board.blackKingsideCastle,
             board.blackQueensideCastle,
             board.whiteKingSquare,
-            board.blackKingSquare
+            board.blackKingSquare,
+            board.zobristKey
         };
 
         if (!board.makeMove(move)) {

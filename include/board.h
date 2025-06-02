@@ -5,6 +5,7 @@
 #include "Gamestate.h"
 #include "move.h"
 #include <vector>
+#include <cstdint>
 
 class Evaluation;
 
@@ -21,6 +22,7 @@ class Board {
         int whiteKingSquare;
         int blackKingSquare;
 
+        uint64_t zobristKey;
 
         Board();
         void setStartPosition();

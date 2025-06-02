@@ -2,6 +2,7 @@
 #define GAMESTATE_H
 
 #include "types.h"
+#include <cstdint>
 
 struct Gamestate {
     Color sideToMove;
@@ -14,6 +15,7 @@ struct Gamestate {
 
     int whiteKingSquare;
     int blackKingSquare;
+    uint64_t zobristKey;
 };
 
 #endif

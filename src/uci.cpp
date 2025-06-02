@@ -17,7 +17,7 @@ void uciLoop() {
         iss >> token;
 
         if(token == "uci") {
-            std::cout << "id name IronfangMoveOrderingv4\n";
+            std::cout << "id name IronfangZobristHashingv5\n";
             std::cout << "id author dark\n";
             std::cout << "uciok\n";
         }

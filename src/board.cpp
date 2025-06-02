@@ -1,11 +1,15 @@
 #include "board.h"
 #include "mailbox.h"
+#include "zobrist.h"
 #include<iostream>
 #include <sstream>
 #include <string>
 #include <cctype>
+#include <cstdint>
+#include <fstream>
 
 Board::Board() {
+    initZobrist();  // Initialzie the zobrist tables
     setStartPosition();
 }
 
@@ -39,6 +43,9 @@ void Board::setStartPosition() {
 
     whiteKingSquare = 60;
     blackKingSquare = 4;
+
+    
+    zobristKey = generateZobristHashKey(*this);
 }
 
 Piece Board::getPiece(int square) const {
@@ -237,14 +244,20 @@ bool Board::makeMove(const Move &move) {
         blackKingsideCastle,
         blackQueensideCastle,
         whiteKingSquare,
-        blackKingSquare
+        blackKingSquare,
+        zobristKey
     };
 
+    if(enPassantSquare != -1) {
+        int file = enPassantSquare % 8;
+        zobristKey ^= zobristEnPassant[file];
+    }
     enPassantSquare = -1;
     
     // Castle updates
     if(move.isKingSideCastle) {
         if(sideToMove == WHITE) {
+
             setPiece(WR, 61);
             setPiece(WK, 62);
             setPiece(NONE, 60);
@@ -252,6 +265,15 @@ bool Board::makeMove(const Move &move) {
             whiteKingSquare = 62;
             whiteKingsideCastle = false;
             whiteQueensideCastle = false;
+
+            // Zobrist changes
+            xorPiece(zobristKey, WK, 60);
+            xorPiece(zobristKey, WK, 62);
+            xorPiece(zobristKey, WR, 63);
+            xorPiece(zobristKey, WR, 61);
+
+            // zobristKey ^= zobristCastling[0];
+            // zobristKey ^= zobristCastling[1];
         }
         else {
             setPiece(BR, 5);
@@ -261,6 +283,15 @@ bool Board::makeMove(const Move &move) {
             blackKingSquare = 6;
             blackKingsideCastle = false;
             blackQueensideCastle = false;
+
+            // Zobrist changes
+            xorPiece(zobristKey, BK, 4);
+            xorPiece(zobristKey, BK, 6);
+            xorPiece(zobristKey, BR, 7);
+            xorPiece(zobristKey, BR, 5);
+
+            // zobristKey ^= zobristCastling[2];
+            // zobristKey ^= zobristCastling[3];
         }
     }
     else if(move.isQueenSideCastle) {
@@ -272,6 +303,15 @@ bool Board::makeMove(const Move &move) {
             whiteKingSquare = 58;
             whiteKingsideCastle = false;
             whiteQueensideCastle = false;
+
+            // Zobrist Changes
+            xorPiece(zobristKey, WK, 60);
+            xorPiece(zobristKey, WK, 58);
+            xorPiece(zobristKey, WR, 56);
+            xorPiece(zobristKey, WR, 59);
+
+            // zobristKey ^= zobristCastling[0];
+            // zobristKey ^= zobristCastling[1];
         }
         else {
             setPiece(BR, 3);
@@ -281,44 +321,86 @@ bool Board::makeMove(const Move &move) {
             blackKingSquare = 2;
             blackKingsideCastle = false;
             blackQueensideCastle = false;
+
+            // Zobrist Changes
+            xorPiece(zobristKey, BK, 4);
+            xorPiece(zobristKey, BK, 2);
+            xorPiece(zobristKey, BR, 0);
+            xorPiece(zobristKey, BR, 3);
+
+            // zobristKey ^= zobristCastling[2];
+            // zobristKey ^= zobristCastling[3];
         }
     }
     else if(move.isEnPassant) { // en passant
+
         setPiece(NONE, move.from);
         setPiece(move.piece, move.to);
 
         int capturedPawnSquare = move.to + (sideToMove == WHITE? 8 : -8);
+        Piece capturedPiece = getPiece(capturedPawnSquare);
         setPiece(NONE, capturedPawnSquare);
+
+        // Zobrist Changes
+        xorPiece(zobristKey, move.piece, move.from);
+        xorPiece(zobristKey, move.piece, move.to);
+        xorPiece(zobristKey, capturedPiece, capturedPawnSquare);
+        
     }
     else {
         // normal moves and captures
         if(move.piece == WP || move.piece == BP) {
             if(abs(move.from - move.to) == 16) {
-                
                 enPassantSquare = move.from + (sideToMove == WHITE? -8 : 8);
-                
+                // zobrist changes
+                int file = enPassantSquare % 8;
+                zobristKey ^= zobristEnPassant[file];
             }
 
             if(move.promotion) {
-                if(move.capture) setPiece(NONE, move.to);
+
+                if(move.capture) {
+                    setPiece(NONE, move.to);
+                    // zobrist changes
+                    xorPiece(zobristKey, (Piece)move.capture, move.to);
+                } 
+
                 setPiece(NONE, move.from);
                 Piece promoteTo = sideToMove==WHITE? (Piece)move.promotion : (Piece)(move.promotion+8);
                 setPiece(promoteTo, move.to);
+
+                // Zobrist changes
+                xorPiece(zobristKey, move.piece, move.from);
+                xorPiece(zobristKey, promoteTo, move.to);
             }
             else {
+                if(move.capture) xorPiece(zobristKey, (Piece)move.capture, move.to);
+
                 setPiece(NONE, move.from);
                 setPiece(move.piece, move.to);
+
+                // Zobrist changes
+                xorPiece(zobristKey, move.piece, move.from);
+                xorPiece(zobristKey, move.piece, move.to);
+
             }
         }
         else {
-            setPiece(NONE, move.from);
-            setPiece(move.piece, move.to);
+            if(move.capture) xorPiece(zobristKey, (Piece)move.capture, move.to);
+
+                setPiece(NONE, move.from);
+                setPiece(move.piece, move.to);
+
+                // Zobrist changes
+                xorPiece(zobristKey, move.piece, move.from);
+                xorPiece(zobristKey, move.piece, move.to);
         }
 
         if (move.piece == WK) {
             whiteKingsideCastle = false;
             whiteQueensideCastle = false;
             whiteKingSquare = move.to;
+            
         } else if (move.piece == BK) {
             blackKingsideCastle = false;
             blackQueensideCastle = false;
@@ -336,8 +418,18 @@ bool Board::makeMove(const Move &move) {
             if (move.to == 0) blackQueensideCastle = false;
             if (move.to == 7) blackKingsideCastle = false;
         }
+
+        
     }
+
+    // zobrist changes
+    if(prevState.whiteKingsideCastle != whiteKingsideCastle) zobristKey ^= zobristCastling[0];
+    if(prevState.whiteQueensideCastle != whiteQueensideCastle) zobristKey ^= zobristCastling[1];
+    if(prevState.blackKingsideCastle != blackKingsideCastle) zobristKey ^= zobristCastling[2];
+    if(prevState.blackQueensideCastle != blackQueensideCastle) zobristKey ^= zobristCastling[3];
+
     sideToMove = (sideToMove == WHITE)? BLACK : WHITE;
+    zobristKey ^= zobristBlackToMove;
 
     if(sideToMove == BLACK) {
         if(isSquareAttacked(whiteKingSquare, BLACK)){
@@ -351,7 +443,7 @@ bool Board::makeMove(const Move &move) {
             unmakeMove(move, prevState);
             return false;
         }
-    }
+    } 
     return true;
 }
 
@@ -422,6 +514,8 @@ void Board::unmakeMove(const Move &move, const Gamestate &prevState) {
 
         }
     }
+
+    zobristKey = prevState.zobristKey;
 }
 
 bool Board::tryMove(const Move& move) {
@@ -433,7 +527,8 @@ bool Board::tryMove(const Move& move) {
         blackKingsideCastle,
         blackQueensideCastle,
         whiteKingSquare,
-        blackKingSquare
+        blackKingSquare,
+        zobristKey
     };
 
     if(!makeMove(move)) return false;
