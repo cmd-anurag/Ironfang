@@ -27,8 +27,12 @@ class Board {
         Board();
         void setStartPosition();
         void print() const;
-        Piece getPiece(int square) const;
-        void setPiece(Piece p, int square);
+        inline Piece getPiece(int square) const {
+            return squares[square];
+        }
+        inline void setPiece(Piece p, int square) {
+            squares[square] = p;
+        }
         bool setPositionFromFEN(const std::string& fen);
         std::vector<Move> generateMoves() const;
         bool isSquareAttacked(int square, Color opponentColor) const;

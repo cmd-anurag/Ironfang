@@ -1,4 +1,5 @@
 #include "zobrist.h"
+#include "bitboard.h"
 #include <random> 
 
 uint64_t zobristPieces[12][64];
@@ -27,6 +28,36 @@ void initZobrist() {
 
     zobristBlackToMove = dist(rng);
 
+}
+
+uint64_t generateZobristHashKey(BitBoard &b)
+{
+    uint64_t key = 0;
+
+    for(int square = 0; square < 64; ++square) {
+        Piece p = b.getPiece(square);
+        int index = pieceToZobristIndex(p);
+
+        if(index != -1) {
+            key ^= zobristPieces[index][square];
+        }
+    }
+
+    if(b.whiteKingsideCastle) key ^= zobristCastling[0];
+    if(b.whiteQueensideCastle) key ^= zobristCastling[1];
+    if(b.blackKingsideCastle) key ^= zobristCastling[2];
+    if(b.blackQueensideCastle) key ^= zobristCastling[3];
+
+    if(b.enPassantSquare != -1) {
+        int file = b.enPassantSquare % 8;
+        key ^= zobristEnPassant[file];
+    }
+
+    if(b.sideToMove == BLACK) {
+        key ^= zobristBlackToMove;
+    }
+
+    return key;
 }
 
 uint64_t generateZobristHashKey(Board &b)

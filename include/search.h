@@ -2,14 +2,15 @@
 #define SEARCH_H
 
 #include "board.h"
+#include "bitboard.h"
 
-constexpr int MAX_DEPTH = 7;
+constexpr int MAX_DEPTH = 6;
 
 class Search {
     public:
-        static Move findBestMove(Board &board, int depth);
+        static Move findBestMove(BitBoard &board, int depth, int timeLimit);
     private:
-        static int minimaxAlphaBeta(Board &board, int depth, int alpha, int beta);
+        static int minimaxAlphaBeta(BitBoard &board, int depth, int alpha, int beta);
 };
 
 #endif

@@ -47,13 +47,6 @@ void Board::setStartPosition() {
     zobristKey = generateZobristHashKey(*this);
 }
 
-Piece Board::getPiece(int square) const {
-    return squares[square];
-}
-
-void Board::setPiece(Piece p, int square) {
-    squares[square] = p;
-}
 
 bool Board::setPositionFromFEN(const std::string& fen) {
     // Clear the board first

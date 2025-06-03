@@ -2,6 +2,7 @@
 #include <cstdint>
 #include "types.h"
 #include "board.h"
+#include "bitboard.h"
 
 extern uint64_t zobristPieces[12][64]; // 12 Piece types - 64 possible squares for each
 extern uint64_t zobristCastling[4]; // KQkq
@@ -10,6 +11,7 @@ extern uint64_t zobristBlackToMove;
 
 void initZobrist();
 uint64_t generateZobristHashKey(Board &b);
+uint64_t generateZobristHashKey(BitBoard &b);
 
 inline int pieceToZobristIndex(Piece p) {
     if (p == NONE) return -1;

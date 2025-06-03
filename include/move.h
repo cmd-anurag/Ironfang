@@ -5,6 +5,7 @@
 #include "types.h"
 
 class Board;
+class BitBoard;
 
 struct Move
 {
@@ -27,7 +28,7 @@ struct Move
 
 std::string moveToAlgrebraic(Move move);
 std::string moveToUCI(Move move);
-Move uciToMove(const std::string& uci, Board& board);
+Move uciToMove(const std::string& uci, BitBoard &board);
 std::ostream& operator<<(std::ostream& os, const Move &move);
 bool operator==(const Move &lhs, const Move &rhs);
 

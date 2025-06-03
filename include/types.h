@@ -9,6 +9,17 @@ enum Piece {
     BP = 9, BR, BN, BB, BQ, BK 
 };
 
+enum PieceType {
+    PT_NONE  = 0,
+    PT_PAWN  = 1,
+    PT_ROOK  = 2,
+    PT_KNIGHT= 3,
+    PT_BISHOP= 4,
+    PT_QUEEN = 5,
+    PT_KING  = 6
+};
+
+
 enum Color {
     WHITE,
     BLACK,

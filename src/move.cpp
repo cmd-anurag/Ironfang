@@ -1,5 +1,6 @@
 #include "move.h"
 #include "board.h"
+#include "bitboard.h"
 #include "types.h"
 #include <string>
 
@@ -86,7 +87,7 @@ std::string moveToUCI(Move move) {
     return result;
 }
 
-Move uciToMove(const std::string& uci, Board& board) {
+Move uciToMove(const std::string& uci, BitBoard &board) {
     std::vector<Move> moves = board.generateMoves();
 
     int fromFile = uci[0] - 'a';

@@ -6,7 +6,11 @@
 #include <cstdint>
 #include <algorithm>
 #include <array>
+#include <chrono>
 
+
+bool timeUP = false;
+std::chrono::steady_clock::time_point startTime;
 constexpr int INF = 1000000;
 
 std::vector<std::vector<Move>> killerMoves(MAX_DEPTH, std::vector<Move>(2, Move(NONE, -1, -1)));
@@ -15,11 +19,30 @@ TranspositionTable TT;
 
 uint64_t nodeCount = 0;
 
-Move Search::findBestMove(Board& board, int maxDepth) {
+Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     Move bestMove{NONE, -1, -1};
     nodeCount = 0;
     TT.hitCount = 0;
     TT.lookupCount = 0;
+    timeUP = false;
+
+    // startTime = std::chrono::steady_clock::now();
+
+    // std::vector<Move> initialMoves = board.generateMoves();
+    // for (const Move& move : initialMoves) {
+    //     // Find the first legal move as a fallback
+    //     Gamestate prevdata = {
+    //         board.sideToMove, board.enPassantSquare, board.whiteKingsideCastle,
+    //         board.whiteQueensideCastle, board.blackKingsideCastle, board.blackQueensideCastle,
+    //         board.whiteKingSquare, board.blackKingSquare, board.zobristKey
+    //     };
+        
+    //     if (board.makeMove(move)) {
+    //         board.unmakeMove(move, prevdata);
+    //         bestMove = move; // Store the first legal move as fallback
+    //         break;
+    //     }
+    // }
 
     // Iterative Deepening Search from depth 1 to maxDepth
     for (int currentDepth = 1; currentDepth <= maxDepth; currentDepth++) {
@@ -62,6 +85,17 @@ Move Search::findBestMove(Board& board, int maxDepth) {
             int score = -minimaxAlphaBeta(board, currentDepth - 1, -beta, -alpha);
             board.unmakeMove(move, prevdata);
 
+            // if (timeLimit > 0) {
+            //     auto currentTime = std::chrono::steady_clock::now();
+            //     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            //         currentTime - startTime).count();
+                    
+            //     if (elapsed >= timeLimit) {
+            //         timeUP = true;
+            //         break;
+            //     }
+            // }
+
             if (!foundLegalMove || score > bestScore) {
                 bestScore = score;
                 bestMove = move;
@@ -76,6 +110,8 @@ Move Search::findBestMove(Board& board, int maxDepth) {
         if (!foundLegalMove) {
             return Move{NONE, -1, -1};
         }
+
+        // if(timeUP) break;
         
         // Display info after each depth iteration
         // double hitRate = (TT.lookupCount == 0) ? 0.0 : 
@@ -88,23 +124,23 @@ Move Search::findBestMove(Board& board, int maxDepth) {
     }
 
     // Final statistics
-    std::cerr << "Nodes searched: " << nodeCount << '\n';
-    double hitRate = (TT.lookupCount == 0) ? 0.0 : 
-                  (100.0 * double(TT.hitCount) / double(TT.lookupCount));
-    std::cerr << "TT lookups: " << TT.lookupCount
-              << "  hits: " << TT.hitCount
-              << "  hit rate: " << hitRate << "%" << std::endl;
+    // std::cerr << "Nodes searched: " << nodeCount << '\n';
+    // double hitRate = (TT.lookupCount == 0) ? 0.0 : 
+    //               (100.0 * double(TT.hitCount) / double(TT.lookupCount));
+    // std::cerr << "TT lookups: " << TT.lookupCount
+    //           << "  hits: " << TT.hitCount
+    //           << "  hit rate: " << hitRate << "%" << std::endl;
 
-    std::cerr << "Total Store Attempts: " << TT.totalStoreAttempts << "\n";
-    std::cerr << "Actual Stores:        " << TT.actualStores << "\n";
-    std::cerr << "Overwritten Entries:  " << TT.overwritten << "\n";
-    std::cerr << "Currently Occupied:   " << TT.countOccupied() << "\n";
-    std::cerr << "TT Utilization:       " << (100.0 * TT.countOccupied() / TT_SIZE) << "%\n";
+    // std::cerr << "Total Store Attempts: " << TT.totalStoreAttempts << "\n";
+    // std::cerr << "Actual Stores:        " << TT.actualStores << "\n";
+    // std::cerr << "Overwritten Entries:  " << TT.overwritten << "\n";
+    // std::cerr << "Currently Occupied:   " << TT.countOccupied() << "\n";
+    // std::cerr << "TT Utilization:       " << (100.0 * TT.countOccupied() / TT_SIZE) << "%\n";
 
     return bestMove;
 }
 
-int Search::minimaxAlphaBeta(Board& board, int depth, int alpha, int beta) {
+int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
     ++nodeCount; // an efficiency metric
 
     // before doing anything check T-table

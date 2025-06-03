@@ -80,44 +80,53 @@ const int kingEgPST[64] = {
 const int *PST[7] = {pawnPST, rookPST, knightPST, bishopPST, queenPST, kingMdPST, kingEgPST};
 
 class Board;
+class BitBoard;
 
-int Evaluation::evaluate(const Board &board) {
-
+int Evaluation::evaluate(const BitBoard &board) {
     int phaseMaterial = 0;
-    for(int i = 0; i < 64; ++i) {
-        Piece p = board.getPiece(i);
-        if(p == NONE) continue;
-
+    int score = 0;
+    
+    // First pass: calculate phase material
+    uint64_t allPieces = board.getAllPieces();
+    uint64_t tempPieces = allPieces;
+    while(tempPieces) {
+        int square = board.popLSB(tempPieces);
+        Piece p = board.getPiece(square);
         int basePiece = p % 8;
-
-        if(basePiece != 1 && basePiece != 6) phaseMaterial += pieceValue[basePiece];
+        
+        if(basePiece != 1 && basePiece != 6) {
+            phaseMaterial += pieceValue[basePiece];
+        }
     }
     bool endgame = phaseMaterial <= 1300;
     
-    int score = 0;
-    for(int i = 0; i < 64; ++i) {
-        Piece p = board.getPiece(i);
-        if(p == NONE) continue;
-
+    // Evaluate white pieces
+    uint64_t whitePieces = board.getWhitePieces();
+    while(whitePieces) {
+        int square = board.popLSB(whitePieces);
+        Piece p = board.getPiece(square);
         int basePiece = p % 8;
-        Color pieceColor = getPieceColor(p);
         
-        if(pieceColor == WHITE) {
-            if(endgame && basePiece == 6) {
-                score += pieceValue[basePiece] + PST[basePiece][i];    
-            }
-            else {
-                score += pieceValue[basePiece] + PST[basePiece-1][i];
-            }
-            // yeah the PST indexing for base pieces are weird, the explanation is that i put pawn at index 0 instead of 1, rook at index 1 instead of 2 and the basepiece is starting from 1, and since King has two PST entries, it does not need a decrement when i'm trying to access its endgame table
+        if(endgame && basePiece == 6) {
+            score += pieceValue[basePiece] + PST[basePiece][square];    
         }
         else {
-            if(endgame && basePiece == 6) {
-                score -= pieceValue[basePiece] + PST[basePiece][mirror(i)];    
-            }
-            else {
-                score -= pieceValue[basePiece] + PST[basePiece - 1][mirror(i)];
-            }
+            score += pieceValue[basePiece] + PST[basePiece-1][square];
+        }
+    }
+    
+    // Evaluate black pieces
+    uint64_t blackPieces = board.getBlackPieces();
+    while(blackPieces) {
+        int square = board.popLSB(blackPieces);
+        Piece p = board.getPiece(square);
+        int basePiece = p % 8;
+        
+        if(endgame && basePiece == 6) {
+            score -= pieceValue[basePiece] + PST[basePiece][mirror(square)];    
+        }
+        else {
+            score -= pieceValue[basePiece] + PST[basePiece - 1][mirror(square)];
         }
     }
 
