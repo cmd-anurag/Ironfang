@@ -124,18 +124,18 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     }
 
     // Final statistics
-    // std::cerr << "Nodes searched: " << nodeCount << '\n';
-    // double hitRate = (TT.lookupCount == 0) ? 0.0 : 
-    //               (100.0 * double(TT.hitCount) / double(TT.lookupCount));
-    // std::cerr << "TT lookups: " << TT.lookupCount
-    //           << "  hits: " << TT.hitCount
-    //           << "  hit rate: " << hitRate << "%" << std::endl;
+    std::cerr << "Nodes searched: " << nodeCount << '\n';
+    double hitRate = (TT.lookupCount == 0) ? 0.0 : 
+                  (100.0 * double(TT.hitCount) / double(TT.lookupCount));
+    std::cerr << "TT lookups: " << TT.lookupCount
+              << "  hits: " << TT.hitCount
+              << "  hit rate: " << hitRate << "%" << std::endl;
 
-    // std::cerr << "Total Store Attempts: " << TT.totalStoreAttempts << "\n";
-    // std::cerr << "Actual Stores:        " << TT.actualStores << "\n";
-    // std::cerr << "Overwritten Entries:  " << TT.overwritten << "\n";
-    // std::cerr << "Currently Occupied:   " << TT.countOccupied() << "\n";
-    // std::cerr << "TT Utilization:       " << (100.0 * TT.countOccupied() / TT_SIZE) << "%\n";
+    std::cerr << "Total Store Attempts: " << TT.totalStoreAttempts << "\n";
+    std::cerr << "Actual Stores:        " << TT.actualStores << "\n";
+    std::cerr << "Overwritten Entries:  " << TT.overwritten << "\n";
+    std::cerr << "Currently Occupied:   " << TT.countOccupied() << "\n";
+    std::cerr << "TT Utilization:       " << (100.0 * TT.countOccupied() / TT_SIZE) << "%\n";
 
     return bestMove;
 }
@@ -150,10 +150,52 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
         return tempEval;
     }
 
-    if (depth == 0) {
-        int eval = Evaluation::evaluate(board);
-        TT.store(board.zobristKey, 0, eval, TT_EXACT, Move(NONE, -1, -1));
-        return eval;
+    int kingSq = (board.sideToMove == WHITE) ? board.whiteKingSquare : board.blackKingSquare;
+    Color opponent = (board.sideToMove == WHITE) ? BLACK : WHITE;
+    bool inCheck = board.isSquareAttacked(kingSq, opponent);
+
+    if (depth >= 3 && !inCheck && hasNonPawnMaterial(board, board.sideToMove)) {
+        // Make a null move (skip turn)
+        Gamestate prevState = {
+            board.sideToMove,
+            board.enPassantSquare,
+            board.whiteKingsideCastle,
+            board.whiteQueensideCastle,
+            board.blackKingsideCastle,
+            board.blackQueensideCastle,
+            board.whiteKingSquare,
+            board.blackKingSquare,
+            board.zobristKey
+        };
+        
+        // Skip turn by just changing side to move and zobrist key
+        board.sideToMove = (board.sideToMove == WHITE) ? BLACK : WHITE;
+        board.zobristKey ^= zobristBlackToMove;
+        board.enPassantSquare = -1; // Reset en passant
+        
+        // Reduced depth for null-move - R=2 works well as a starting point
+        int R = 2;
+        if (depth > 6) R = 3; // Deeper reduction for deeper searches
+        
+        // Search with reduced depth
+        int nullMoveScore = -minimaxAlphaBeta(board, depth - 1 - R, -beta, -beta + 1);
+        
+        // Restore board state
+        board.sideToMove = prevState.sideToMove;
+        board.enPassantSquare = prevState.enPassantSquare;
+        board.zobristKey = prevState.zobristKey;
+        
+        // If null-move search indicates position is too good, prune this branch
+        if (nullMoveScore >= beta)
+            return beta;
+    }
+
+    if (depth <= 0) {
+        return quiescenceSearch(board, alpha, beta);
+    }
+    // In your alphaBeta function
+    if (board.repetitionMap[board.zobristKey] >= 3) {
+        return 0; // Draw score
     }
 
     std::vector<Move> moves = board.generateMoves();
@@ -207,6 +249,9 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
     int originalAlpha = alpha;
     Move bestMove(NONE, -1, -1);
 
+    // Add just before the for-loop over moves in minimaxAlphaBeta
+    int moveCount = 0;
+
     for (const Move& move : moves) {
         Gamestate prevdata = {
             board.sideToMove,
@@ -224,8 +269,33 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
             continue;
         }
         foundLegalMove = true;
+        
+        // Increment move counter
+        moveCount++;
 
-        int score = -minimaxAlphaBeta(board, depth - 1, -beta, -alpha);
+        int score;
+        
+        // Late Move Reduction
+        int reduction = 0;
+        if (depth >= 3 && moveCount >= 4 && !inCheck && !move.capture && move != killerMoves[depth][0] && move != killerMoves[depth][1]) {
+            reduction = 1;
+            if (moveCount >= 6) reduction++;
+            if (depth >= 6) reduction++;
+        }
+        
+        if (reduction > 0) {
+            // Try reduced depth search first
+            score = -minimaxAlphaBeta(board, depth - 1 - reduction, -alpha - 1, -alpha);
+            
+            // If it looks promising, do a full search
+            if (score > alpha) {
+                score = -minimaxAlphaBeta(board, depth - 1, -beta, -alpha);
+            }
+        } else {
+            // Regular search for important moves
+            score = -minimaxAlphaBeta(board, depth - 1, -beta, -alpha);
+        }
+        
         board.unmakeMove(move, prevdata);
 
         // Beta cutoff
@@ -281,4 +351,109 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
     TT.store(board.zobristKey, depth, alpha, flag, bestMove);
 
     return alpha;
+}
+
+int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth) {
+    ++nodeCount;
+    
+    // 1. TT Probe - Store quiescence results to improve hit rate
+    Move tempMove = Move(NONE, -1, -1);
+    int tempEval;
+    if(TT.probe(board.zobristKey, -qdepth, alpha, beta, tempEval, tempMove)) {
+        return tempEval;
+    }
+    
+    // 2. Depth limit - Prevent excessive searching
+    if (qdepth >= 6) {
+        int eval = Evaluation::evaluate(board);
+        // Store evaluation in TT
+        TT.store(board.zobristKey, -qdepth, eval, TT_EXACT, Move(NONE, -1, -1));
+        return eval;
+    }
+    
+    // 3. Stand pat evaluation
+    int standPat = Evaluation::evaluate(board);
+    
+    // Stand pat cutoff
+    if (standPat >= beta) {
+        // Store lower bound in TT
+        TT.store(board.zobristKey, -qdepth, beta, TT_LOWER, Move(NONE, -1, -1));
+        return beta;
+    }
+    
+    // Update alpha if stand pat is better
+    if (alpha < standPat)
+        alpha = standPat;
+    
+    // Generate capture moves
+    std::vector<Move> allMoves = board.generateMoves();
+    std::vector<Move> captures;
+    for(const Move &move : allMoves) {
+        if(move.capture) {
+            captures.push_back(move);
+        }
+    }
+    
+    // 4. Delta pruning - Skip captures that can't improve alpha
+    const int FUTILITY_MARGIN = 200; // 2 pawns worth
+    
+    // Order captures by MVV-LVA
+    std::sort(captures.begin(), captures.end(), [](const Move& a, const Move& b) {
+        return (Evaluation::pieceValue[a.capture] - Evaluation::pieceValue[a.piece & 7]) >
+               (Evaluation::pieceValue[b.capture] - Evaluation::pieceValue[b.piece & 7]);
+    });
+    
+    Move bestMove(NONE, -1, -1);
+    
+    for (const Move& move : captures) {
+        // Delta pruning - skip captures that can't improve alpha
+        if (standPat + Evaluation::pieceValue[move.capture] + FUTILITY_MARGIN <= alpha) {
+            continue; // This capture can't improve alpha
+        }
+        
+        Gamestate prevdata = {
+            board.sideToMove,
+            board.enPassantSquare,
+            board.whiteKingsideCastle,
+            board.whiteQueensideCastle,
+            board.blackKingsideCastle,
+            board.blackQueensideCastle,
+            board.whiteKingSquare,
+            board.blackKingSquare,
+            board.zobristKey
+        };
+        
+        if (!board.makeMove(move))
+            continue;
+            
+        int score = -quiescenceSearch(board, -beta, -alpha, qdepth + 1);
+        board.unmakeMove(move, prevdata);
+        
+        if (score >= beta) {
+            // Store lower bound in TT
+            TT.store(board.zobristKey, -qdepth, beta, TT_LOWER, move);
+            return beta;
+        }
+            
+        if (score > alpha) {
+            alpha = score;
+            bestMove = move;
+        }
+    }
+    
+    TT_FLAG finalFlag = (alpha > standPat) ? TT_EXACT : TT_UPPER;
+    TT.store(board.zobristKey, -qdepth, alpha, finalFlag, bestMove);
+
+    return alpha;
+}
+
+// Helper function to detect positions where null-move is unsafe
+bool Search::hasNonPawnMaterial(const BitBoard& board, Color side) {
+    if (side == WHITE) {
+        return board.getWhiteKnights() || board.getWhiteBishops() || 
+               board.getWhiteRooks() || board.getWhiteQueens();
+    } else {
+        return board.getBlackKnights() || board.getBlackBishops() || 
+               board.getBlackRooks() || board.getBlackQueens();
+    }
 }

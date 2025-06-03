@@ -56,9 +56,15 @@ void TranspositionTable::store(uint64_t zobristKey, int depth, int eval, TT_FLAG
 
     bool isOverwrite = (entry.key != 0 && entry.key != zobristKey);
 
-    // replace only if the slot is empty or having an entry of shallower depth
+    // Don't replace important entries with quiescence entries
+    // Quiescence searches use negative depth, regular searches use positive depth
+    if (depth < 0 && entry.depth > 0 && entry.key != zobristKey) {
+        // Don't overwrite regular search entries with quiescence entries
+        return;
+    }
 
-    if(entry.key != zobristKey || entry.depth <= depth) {
+    // Replace if empty, different position, or new entry is deeper
+    if (entry.key != zobristKey || entry.depth <= depth) {
         if (isOverwrite) ++overwritten;
         entry.key = zobristKey;
         entry.depth = depth;
@@ -66,6 +72,10 @@ void TranspositionTable::store(uint64_t zobristKey, int depth, int eval, TT_FLAG
         entry.flag = flag;
         entry.bestMove = bestMove;
         ++actualStores;
+    } 
+    // Always preserve the best move, even if we don't replace the entry
+    else if (entry.key == zobristKey && bestMove.piece != NONE) {
+        entry.bestMove = bestMove;
     }
 }
 

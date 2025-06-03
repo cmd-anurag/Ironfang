@@ -2,7 +2,7 @@
 #include <cstdint>
 #include "move.h"
 
-constexpr size_t TT_SIZE = 1 << 21; // 2^21  = 2,097,152 entries
+constexpr size_t TT_SIZE = 1 << 22; // 2^21  = 2,097,152 entries
 constexpr size_t TT_MASK = TT_SIZE  - 1;
 
 enum TT_FLAG { 

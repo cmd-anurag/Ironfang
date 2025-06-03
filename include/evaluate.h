@@ -17,6 +17,6 @@ class Evaluation {
     static int evaluate(const BitBoard &board);
     static constexpr int pieceValue[7] = {0, 100, 500, 320, 330, 900, 20000};
     static int inline mirror(int square) {
-        return (7 - square / 8) * 8 + (square % 8);
+            return (7-(square >> 3)) << 3 | (square & 7);
     };
 };

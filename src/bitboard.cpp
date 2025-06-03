@@ -295,11 +295,16 @@ void BitBoard::generatePawnMoves(int square, std::vector<Move>& moves, Piece p, 
         if (enemies & (1ULL << targetSquare)) {
             Piece captured = getPiece(targetSquare);
             if (targetSquare / 8 == promotionRank) {
-                // Promotion with capture - (piece, from, to, promotion, capture, kCastle, qCastle, enPassant)
-                moves.push_back(Move(p, square, targetSquare, WQ, captured));
-                moves.push_back(Move(p, square, targetSquare, WR, captured));
-                moves.push_back(Move(p, square, targetSquare, WB, captured));
-                moves.push_back(Move(p, square, targetSquare, WN, captured));
+                // Promotion with capture
+                Piece baseQueen = (color == WHITE) ? WQ : BQ;
+                Piece baseRook = (color == WHITE) ? WR : BR;
+                Piece baseBishop = (color == WHITE) ? WB : BB;
+                Piece baseKnight = (color == WHITE) ? WN : BN;
+                
+                moves.push_back(Move(p, square, targetSquare, baseQueen, captured));
+                moves.push_back(Move(p, square, targetSquare, baseRook, captured));
+                moves.push_back(Move(p, square, targetSquare, baseBishop, captured));
+                moves.push_back(Move(p, square, targetSquare, baseKnight, captured));
             } else {
                 moves.push_back(Move(p, square, targetSquare, 0, captured));
             }
@@ -602,6 +607,7 @@ bool BitBoard::makeMove(const Move &move) {
 
     sideToMove = (sideToMove == WHITE)? BLACK : WHITE;
     zobristKey ^= zobristBlackToMove;
+    repetitionMap[zobristKey]++;
 
     if(sideToMove == BLACK) {
         if(isSquareAttacked(whiteKingSquare, BLACK)){
@@ -615,6 +621,7 @@ bool BitBoard::makeMove(const Move &move) {
             return false;
         }
     } 
+
     return true;
 }
 
@@ -676,7 +683,9 @@ void BitBoard::unmakeMove(const Move &move, const Gamestate &prevState) {
             setPiece(NONE, move.to);
         }
     }
-
+    if (--repetitionMap[zobristKey] == 0)
+        repetitionMap.erase(zobristKey);
+        
     zobristKey = prevState.zobristKey;
 }
 

@@ -6,6 +6,7 @@
 #include "move.h"
 #include <vector>
 #include <cstdint>
+#include <unordered_map>
 
 class Evaluation;
 
@@ -23,6 +24,7 @@ class BitBoard {
         int blackKingSquare;
 
         uint64_t zobristKey;
+        std::unordered_map<uint64_t, int> repetitionMap;
 
         BitBoard();
         void setStartPosition();
@@ -78,6 +80,37 @@ class BitBoard {
         int popLSB(uint64_t& bb) const;
 
         friend class Evaluation;
+
+        inline uint64_t getWhitePawns() const {
+            return whitePawns;
+        }
+        inline uint64_t getWhiteBishops() const {
+            return whiteBishops;
+        }
+        inline uint64_t getWhiteRooks() const {
+            return whiteRooks;
+        }
+        inline uint64_t getBlackPawns() const {
+            return blackPawns;
+        }
+        inline uint64_t getBlackBishops() const {
+            return blackBishops;
+        }
+        inline uint64_t getBlackRooks() const {
+            return blackRooks;
+        }
+        inline uint64_t getWhiteQueens() const {
+            return whiteQueens;
+        }
+        inline uint64_t getBlackQueens() const {
+            return blackQueens;
+        }
+        inline uint64_t getWhiteKnights() const {
+            return whiteKnights;
+        }
+        inline uint64_t getBlackKnights() const {
+            return blackKnights;
+        }
 
     private:
         uint64_t whitePawns, blackPawns;

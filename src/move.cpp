@@ -103,10 +103,10 @@ Move uciToMove(const std::string& uci, BitBoard &board) {
     for (const Move& move : moves) {
         if (move.from == from && move.to == to) {
             if (promoChar == '\0' || (
-                (promoChar == 'q' && move.promotion == WQ) ||
-                (promoChar == 'r' && move.promotion == WR)  ||
-                (promoChar == 'b' && move.promotion == WB)||
-                (promoChar == 'n' && move.promotion == WN))) {
+                (promoChar == 'q' && (move.promotion == WQ || move.promotion == BQ)) ||
+                (promoChar == 'r' && (move.promotion == WR || move.promotion == BR)) ||
+                (promoChar == 'b' && (move.promotion == WB || move.promotion == BB)) ||
+                (promoChar == 'n' && (move.promotion == WN || move.promotion == BN)))) {
                 return move;
             }
         }
@@ -141,4 +141,9 @@ bool operator==(const Move &lhs, const Move &rhs)
     lhs.isKingSideCastle    == rhs.isKingSideCastle &&
     lhs.isQueenSideCastle   == rhs.isQueenSideCastle &&
     lhs.isEnPassant         == rhs.isEnPassant;
+}
+
+// Add this method to your Move class
+bool operator!=(const Move &lhs, const Move &rhs) {
+    return !(lhs == rhs);
 }

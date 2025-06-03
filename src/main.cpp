@@ -12,8 +12,10 @@
 int main() {
     uciLoop();
     // BitBoard board;
-    // board.setPositionFromFEN("r2qkb1r/pppb1ppp/2n2n2/1B1Q4/8/2N1P3/PPP2PPP/R1B1K1NR w KQkq - 1 7");
-    // Move move = Search::findBestMove(board, 7);
+    // board.setPositionFromFEN("r1bqkb1r/ppp1pppp/2n2n2/3p4/3P4/2NQ4/PPP1PPPP/R1B1KBNR w KQkq - 3 4");
+    // // board.print();
+    // // std::cout << Evaluation::evaluate(board);
+    // Move move = Search::findBestMove(board, 7, -1);
     // std::cout << '\n' << move << '\n';
     // std::vector<Move> moves = board.generateMoves();
     // std::cout << moves.size() << "\n";
