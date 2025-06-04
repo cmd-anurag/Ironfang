@@ -217,6 +217,7 @@ bool BitBoard::isSquareAttacked(int square, Color opponentColor) const {
 
 std::vector<Move> BitBoard::generateMoves() const {
     std::vector<Move> moves;
+    moves.reserve(218);
     
     uint64_t pieces = (sideToMove == WHITE) ? getWhitePieces() : getBlackPieces();
     

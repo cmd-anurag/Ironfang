@@ -224,11 +224,11 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
             score += 1000 + (Evaluation::pieceValue[move.capture] * 10 - Evaluation::pieceValue[move.piece]);
         }
 
-        Color c = getPieceColor(move.piece);
-        int targetKingSquare = c == BLACK? board.whiteKingSquare : board.blackKingSquare;
-        if(board.tryMove(move) && board.isSquareAttacked(targetKingSquare, c)) {
-            score += 500;
-        }
+        // Color c = getPieceColor(move.piece);
+        // int targetKingSquare = c == BLACK? board.whiteKingSquare : board.blackKingSquare;
+        // if(board.tryMove(move) && board.isSquareAttacked(targetKingSquare, c)) {
+        //     score += 500;
+        // }
 
         if(move == killerMoves[depth][0]) score += 800;
         if(move == killerMoves[depth][1]) score += 700;
@@ -356,22 +356,14 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
 int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth) {
     ++nodeCount;
     
-    // 1. TT Probe - Store quiescence results to improve hit rate
-    Move tempMove = Move(NONE, -1, -1);
-    int tempEval;
-    if(TT.probe(board.zobristKey, -qdepth, alpha, beta, tempEval, tempMove)) {
-        return tempEval;
-    }
-    
-    // 2. Depth limit - Prevent excessive searching
-    if (qdepth >= 6) {
+    // 1. More aggressive depth limit
+    if (qdepth >= 4) {  // Reduce from 6 to 4
         int eval = Evaluation::evaluate(board);
-        // Store evaluation in TT
         TT.store(board.zobristKey, -qdepth, eval, TT_EXACT, Move(NONE, -1, -1));
         return eval;
     }
     
-    // 3. Stand pat evaluation
+    // 2. Stand pat evaluation
     int standPat = Evaluation::evaluate(board);
     
     // Stand pat cutoff
@@ -394,8 +386,8 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth) {
         }
     }
     
-    // 4. Delta pruning - Skip captures that can't improve alpha
-    const int FUTILITY_MARGIN = 200; // 2 pawns worth
+    // 4. More aggressive delta pruning
+    const int FUTILITY_MARGIN = 150; // Reduce from 200 to 150
     
     // Order captures by MVV-LVA
     std::sort(captures.begin(), captures.end(), [](const Move& a, const Move& b) {
@@ -408,7 +400,12 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth) {
     for (const Move& move : captures) {
         // Delta pruning - skip captures that can't improve alpha
         if (standPat + Evaluation::pieceValue[move.capture] + FUTILITY_MARGIN <= alpha) {
-            continue; // This capture can't improve alpha
+            continue;
+        }
+        
+        // Skip obviously bad captures (losing material)
+        if (Evaluation::pieceValue[move.capture] < Evaluation::pieceValue[move.piece & 7] - 100) {
+            continue;
         }
         
         Gamestate prevdata = {
