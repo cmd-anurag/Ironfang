@@ -111,6 +111,7 @@ class BitBoard {
         inline uint64_t getBlackKnights() const {
             return blackKnights;
         }
+        inline uint64_t getAllPieces() const { return getWhitePieces() | getBlackPieces(); }
 
     private:
         uint64_t whitePawns, blackPawns;
@@ -122,7 +123,6 @@ class BitBoard {
 
         
         
-        uint64_t getAllPieces() const { return getWhitePieces() | getBlackPieces(); }
         inline void clearSquare(int square) {
             uint64_t mask = ~(1ULL << square);
             whitePawns &= mask;

@@ -118,6 +118,8 @@ void uciLoop() {
         else if(token == "go") {
             int movetime = -1;
             int wtime = -1, btime = -1;
+            int winc = 0, binc = 0;
+            int movestogo = 30; // Default assumption
             
             std::string subtoken;
             while (iss >> subtoken) {
@@ -130,14 +132,108 @@ void uciLoop() {
                 else if (subtoken == "btime") {
                     iss >> btime;
                 }
+                else if (subtoken == "winc") {
+                    iss >> winc;
+                }
+                else if (subtoken == "binc") {
+                    iss >> binc;
+                }
+                else if (subtoken == "movestogo") {
+                    iss >> movestogo;
+                }
             }
-             
-            Move bestMove = Search::findBestMove(board, MAX_DEPTH, -1);
-
-            if (bestMove.from == -1) {
-                std::cout << "bestmove 0000\n" << std::flush;
-            } else {
-                std::cout << "bestmove " << moveToUCI(bestMove) << "\n" << std::flush;
+            
+            // Enhanced time allocation
+            int timeForMove = -1;
+            
+            if (movetime > 0) {
+                timeForMove = movetime;
+            }
+            else if ((board.sideToMove == WHITE && wtime > 0) || 
+                     (board.sideToMove == BLACK && btime > 0)) {
+                
+                int timeLeft = (board.sideToMove == WHITE) ? wtime : btime;
+                int increment = (board.sideToMove == WHITE) ? winc : binc;
+                
+                // Better time allocation strategy
+                if (movestogo > 0) {
+                    // If we know moves to go, use appropriate fraction
+                    timeForMove = (timeLeft / (movestogo + 1)) + (increment * 3/4);
+                } else {
+                    // Estimate based on piece count (game phase)
+                    uint64_t allPieces = board.getAllPieces();
+                    int pieceCount = __builtin_popcountll(allPieces);
+                    
+                    int estimatedMoves;
+                    if (pieceCount > 24) {
+                        estimatedMoves = 40; // Early game
+                    } else if (pieceCount > 12) {
+                        estimatedMoves = 30; // Middle game
+                    } else {
+                        estimatedMoves = 20; // Endgame
+                    }
+                    
+                    timeForMove = (timeLeft / estimatedMoves) + (increment * 3/4);
+                }
+                
+                // Safety margins - never use more than 15% of remaining time
+                timeForMove = std::min(timeForMove, timeLeft / 7);
+            }
+            
+            // Set a dynamic maximum depth based on time
+            int maxDepth = MAX_DEPTH; // Very high base value - time will stop search before this
+            if (timeForMove > 0 && timeForMove < 100) {
+                maxDepth = 6; // For very fast time controls
+            } else if (timeForMove > 0 && timeForMove < 500) {
+                maxDepth = 8; // For bullet time controls
+            }
+            
+            // Log intentions
+            std::cout << "info string Starting search with time=" << timeForMove 
+                      << "ms maxDepth=" << maxDepth << "\n" << std::flush;
+            
+            // Set fallback move
+            Move fallbackMove = Move{NONE, -1, -1};
+            std::vector<Move> moves = board.generateMoves();
+            for (const Move& move : moves) {
+                Gamestate prevdata = {
+                    board.sideToMove,
+                    board.enPassantSquare,
+                    board.whiteKingsideCastle,
+                    board.whiteQueensideCastle,
+                    board.blackKingsideCastle,
+                    board.blackQueensideCastle,
+                    board.whiteKingSquare,
+                    board.blackKingSquare,
+                    board.zobristKey
+                };
+                
+                if (board.makeMove(move)) {
+                    board.unmakeMove(move, prevdata);
+                    fallbackMove = move;
+                    break;
+                }
+            }
+            
+            try {
+                Move bestMove = Search::findBestMove(board, maxDepth, timeForMove);
+                
+                if (bestMove.from != -1) {
+                    std::cout << "bestmove " << moveToUCI(bestMove) << "\n" << std::flush;
+                } else if (fallbackMove.from != -1) {
+                    std::cout << "bestmove " << moveToUCI(fallbackMove) << "\n" << std::flush;
+                } else {
+                    // Absolute last resort
+                    std::cout << "bestmove a1a1\n" << std::flush;
+                }
+            }
+            catch (...) {
+                // Emergency fallback
+                if (fallbackMove.from != -1) {
+                    std::cout << "bestmove " << moveToUCI(fallbackMove) << "\n" << std::flush;
+                } else {
+                    std::cout << "bestmove a1a1\n" << std::flush;
+                }
             }
         }
         else if (token == "quit") {
