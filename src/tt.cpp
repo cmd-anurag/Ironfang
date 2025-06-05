@@ -1,11 +1,13 @@
 #include "tt.h"
 #include <cstring>
+#include "algorithm"
 
 TranspositionTable::TranspositionTable()
 {
     for (size_t i = 0; i < TT_SIZE; ++i)
     table[i] = TTEntry{};
     // setting all keys to zero indicating empty
+    currentAge = 0;
 }
 
 bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int beta, int &outEval, Move &outMove)
@@ -15,10 +17,12 @@ bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int be
     size_t index = zobristKey & TT_MASK;
     TTEntry &entry = table[index];
 
-    if (entry.key == zobristKey) {
+    // Optional: check if entry is from current search age
+    if (entry.key == zobristKey && entry.age == currentAge) {
         // Always extract the move if it's the correct position
         outMove = entry.bestMove;
 
+        // Check if stored depth is enough
         if (entry.depth >= depth) {
             switch(entry.flag) {
                 case TT_EXACT:
@@ -47,7 +51,8 @@ bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int be
 }
 
 
-void TranspositionTable::store(uint64_t zobristKey, int depth, int eval, TT_FLAG flag, const Move &bestMove)
+void TranspositionTable::store(uint64_t zobristKey, int depth, int eval,
+                               TT_FLAG flag, const Move &bestMove)
 {
     ++totalStoreAttempts;
 
@@ -56,14 +61,13 @@ void TranspositionTable::store(uint64_t zobristKey, int depth, int eval, TT_FLAG
 
     bool isOverwrite = (entry.key != 0 && entry.key != zobristKey);
 
-    // Don't replace important entries with quiescence entries
-    // Quiescence searches use negative depth, regular searches use positive depth
-    if (depth < 0 && entry.depth > 0 && entry.key != zobristKey) {
-        // Don't overwrite regular search entries with quiescence entries
-        return;
-    }
+    // If you want to prevent overwriting a real (positive-depth) entry
+    // with a quiescence (negative-depth) entry, uncomment:
+    // if (depth < 0 && entry.depth > 0 && entry.key != zobristKey) {
+    //     return;
+    // }
 
-    // Replace if empty, different position, or new entry is deeper
+    // Either empty slot or deeper search => store
     if (entry.key != zobristKey || entry.depth <= depth) {
         if (isOverwrite) ++overwritten;
         entry.key = zobristKey;
@@ -71,9 +75,10 @@ void TranspositionTable::store(uint64_t zobristKey, int depth, int eval, TT_FLAG
         entry.eval = eval;
         entry.flag = flag;
         entry.bestMove = bestMove;
+        entry.age = currentAge; // record current search age
         ++actualStores;
-    } 
-    // Always preserve the best move, even if we don't replace the entry
+    }
+    // Always preserve best move if the position matches
     else if (entry.key == zobristKey && bestMove.piece != NONE) {
         entry.bestMove = bestMove;
     }
@@ -90,4 +95,11 @@ size_t TranspositionTable::countOccupied() const {
         if (table[i].key != 0) ++count;
     }
     return count;
+}
+
+int TranspositionTable::hashfull() const
+{
+    // Using actualStores vs overwritten to estimate occupancy
+    int estimatedOccupancy = actualStores - overwritten;
+    return std::min((unsigned long)1000, std::max((unsigned long)0, (estimatedOccupancy * 1000) / TT_SIZE));
 }

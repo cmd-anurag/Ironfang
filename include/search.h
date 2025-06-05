@@ -4,7 +4,12 @@
 #include "board.h"
 #include "bitboard.h"
 
-constexpr int MAX_DEPTH = 7;
+constexpr int MAX_DEPTH = 15;                // General infinity value
+constexpr int MATE_SCORE = 900000;              // Base mate score
+constexpr int MATE_THRESHOLD = 800000;          // Threshold to detect mate scores
+constexpr int MAX_PLY = 100; 
+
+
 
 class Search {
     public:
