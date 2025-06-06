@@ -111,11 +111,11 @@ void BitBoard::setStartPosition() {
 
 
 
-int BitBoard::getLSB(uint64_t bb) const {
+inline int BitBoard::getLSB(uint64_t bb) const {
     return __builtin_ctzll(bb);
 }
 
-int BitBoard::popLSB(uint64_t& bb) const {
+inline int BitBoard::popLSB(uint64_t& bb) const {
     int lsb = getLSB(bb);
     bb &= bb - 1;
     return lsb;
@@ -250,6 +250,114 @@ std::vector<Move> BitBoard::generateMoves() const {
     }
     
     return moves;
+}
+
+void BitBoard::generateCaptures(std::vector<Move> &captures) const
+{
+    captures.clear();
+    
+    Color color = sideToMove;
+    uint64_t pieces = (color == WHITE) ? getWhitePieces() : getBlackPieces();
+    uint64_t enemies = (color == WHITE) ? getBlackPieces() : getWhitePieces();
+    uint64_t occupied = getAllPieces();
+    
+    // For each piece of the side to move
+    while (pieces) {
+        int square = popLSB(pieces);
+        Piece piece = getPiece(square);
+        
+        switch (piece) {
+            case WP: case BP: {
+                // Pawn captures (including promotions and en passant)
+                int promotionRank = (color == WHITE) ? 0 : 7;
+                
+                // Regular pawn captures
+                uint64_t attacks = getPawnAttacks(square, color) & enemies;
+                
+                while (attacks) {
+                    int targetSquare = popLSB(attacks);
+                    Piece captured = getPiece(targetSquare);
+                    
+                    if (targetSquare / 8 == promotionRank) {
+                        // Promotion captures
+                        Piece baseQueen = (color == WHITE) ? WQ : BQ;
+                        Piece baseRook = (color == WHITE) ? WR : BR;
+                        Piece baseBishop = (color == WHITE) ? WB : BB;
+                        Piece baseKnight = (color == WHITE) ? WN : BN;
+                        
+                        captures.push_back(Move(piece, square, targetSquare, baseQueen, captured));
+                        captures.push_back(Move(piece, square, targetSquare, baseRook, captured));
+                        captures.push_back(Move(piece, square, targetSquare, baseBishop, captured));
+                        captures.push_back(Move(piece, square, targetSquare, baseKnight, captured));
+                    } else {
+                        captures.push_back(Move(piece, square, targetSquare, 0, captured));
+                    }
+                }
+                
+                // En passant capture
+                if (enPassantSquare != -1) {
+                    if (getPawnAttacks(square, color) & (1ULL << enPassantSquare)) {
+                        Piece capturedPawn = (color == WHITE) ? BP : WP;
+                        captures.push_back(Move(piece, square, enPassantSquare, 0, capturedPawn, false, false, true));
+                    }
+                }
+                break;
+            }
+                
+            case WR: case BR: {
+                uint64_t attacks = getRookAttacks(square, occupied) & enemies;
+                while (attacks) {
+                    int targetSquare = popLSB(attacks);
+                    Piece captured = getPiece(targetSquare);
+                    captures.push_back(Move(piece, square, targetSquare, 0, captured));
+                }
+                break;
+            }
+                
+            case WB: case BB: {
+                uint64_t attacks = getBishopAttacks(square, occupied) & enemies;
+                while (attacks) {
+                    int targetSquare = popLSB(attacks);
+                    Piece captured = getPiece(targetSquare);
+                    captures.push_back(Move(piece, square, targetSquare, 0, captured));
+                }
+                break;
+            }
+                
+            case WQ: case BQ: {
+                uint64_t attacks = getQueenAttacks(square, occupied) & enemies;
+                while (attacks) {
+                    int targetSquare = popLSB(attacks);
+                    Piece captured = getPiece(targetSquare);
+                    captures.push_back(Move(piece, square, targetSquare, 0, captured));
+                }
+                break;
+            }
+                
+            case WN: case BN: {
+                uint64_t attacks = getKnightAttacks(square) & enemies;
+                while (attacks) {
+                    int targetSquare = popLSB(attacks);
+                    Piece captured = getPiece(targetSquare);
+                    captures.push_back(Move(piece, square, targetSquare, 0, captured));
+                }
+                break;
+            }
+                
+            case WK: case BK: {
+                uint64_t attacks = getKingAttacks(square) & enemies;
+                while (attacks) {
+                    int targetSquare = popLSB(attacks);
+                    Piece captured = getPiece(targetSquare);
+                    captures.push_back(Move(piece, square, targetSquare, 0, captured));
+                }
+                break;
+            }
+                
+            default:
+                break;
+        }
+    }
 }
 
 void BitBoard::generatePawnMoves(int square, std::vector<Move>& moves, Piece p, Color color) const {

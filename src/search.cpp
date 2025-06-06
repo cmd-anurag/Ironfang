@@ -23,6 +23,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     nodeCount = 0;
     TT.hitCount = 0;
     TT.lookupCount = 0;
+    TT.currentAge++;
     
     // Start timing
     auto startTime = std::chrono::steady_clock::now();
@@ -235,7 +236,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
         int score = 0;
 
         if(move.capture) {
-            score += 1000 + (Evaluation::pieceValue[move.capture] * 10 - Evaluation::pieceValue[move.piece]);
+            score += 1000 + (Evaluation::pieceValue[move.capture & 7] * 10 - Evaluation::pieceValue[move.piece & 7]);
         }
         if(move == tempMove) {
             score += 1500;
@@ -316,6 +317,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
         }
         
         board.unmakeMove(move, prevdata);
+        ++moveIndex;
         // assert(board.zobristKey == originalKey);
         // Beta cutoff
         if (score >= beta) {
@@ -414,13 +416,13 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth) {
 
 
         if(move.capture) {
-            move.heuristicScore += 1000 + (Evaluation::pieceValue[move.capture] * 10 - Evaluation::pieceValue[move.piece]);
+            move.heuristicScore += 1000 + (Evaluation::pieceValue[move.capture & 7] * 10 - Evaluation::pieceValue[move.piece & 7]);
             captures.push_back(move);
         }
     }
     
     // 4. More aggressive delta pruning
-    const int FUTILITY_MARGIN = 150; // Reduce from 200 to 150
+    const int FUTILITY_MARGIN = 200;
     
     // Order captures by MVV-LVA
     std::sort(captures.begin(), captures.end(), [](const Move& a, const Move& b) {
@@ -431,12 +433,12 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth) {
     
     for (const Move& move : captures) {
         // Delta pruning - skip captures that can't improve alpha
-        if (standPat + Evaluation::pieceValue[move.capture] + FUTILITY_MARGIN <= alpha) {
+        if (standPat + Evaluation::pieceValue[move.capture&7] + FUTILITY_MARGIN <= alpha) {
             continue;
         }
         
         // Skip obviously bad captures (losing material)
-        if (Evaluation::pieceValue[move.capture] < Evaluation::pieceValue[move.piece & 7] - 100) {
+        if (Evaluation::pieceValue[move.capture&7] < Evaluation::pieceValue[move.piece & 7] - 100) {
             continue;
         }
         

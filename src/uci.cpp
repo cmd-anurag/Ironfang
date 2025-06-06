@@ -154,30 +154,38 @@ void uciLoop() {
                 
                 int timeLeft = (board.sideToMove == WHITE) ? wtime : btime;
                 int increment = (board.sideToMove == WHITE) ? winc : binc;
+                int pieceCount = 0;
                 
-                // Better time allocation strategy
+                // More aggressive time allocation strategy
                 if (movestogo > 0) {
-                    // If we know moves to go, use appropriate fraction
-                    timeForMove = (timeLeft / (movestogo + 1)) + (increment * 3/4);
+                    // If we know moves to go, allocate more time per move
+                    timeForMove = (timeLeft / movestogo) + increment;  // Removed +1 from divisor, use full increment
                 } else {
-                    // Estimate based on piece count (game phase)
+                    // Use more aggressive estimates for remaining moves
                     uint64_t allPieces = board.getAllPieces();
-                    int pieceCount = __builtin_popcountll(allPieces);
+                    pieceCount = __builtin_popcountll(allPieces);
                     
                     int estimatedMoves;
                     if (pieceCount > 24) {
-                        estimatedMoves = 40; // Early game
+                        estimatedMoves = 30; // Early game (was 40)
                     } else if (pieceCount > 12) {
-                        estimatedMoves = 30; // Middle game
+                        estimatedMoves = 20; // Middle game (was 30)
                     } else {
-                        estimatedMoves = 20; // Endgame
+                        estimatedMoves = 12; // Endgame (was 20)
                     }
                     
-                    timeForMove = (timeLeft / estimatedMoves) + (increment * 3/4);
+                    timeForMove = (timeLeft / estimatedMoves) + increment; // Use full increment
                 }
                 
-                // Safety margins - never use more than 15% of remaining time
-                timeForMove = std::min(timeForMove, timeLeft / 7);
+                // More aggressive safety margin - allow up to 25% of remaining time (was ~14%)
+                timeForMove = std::min(timeForMove, timeLeft / 4);
+                
+                
+
+                // Give extra time in the opening to prepare strategic advantage
+                if (pieceCount > 28) {
+                    timeForMove = static_cast<int>(timeForMove * 1.1);
+                }
             }
             
             // Set a dynamic maximum depth based on time
