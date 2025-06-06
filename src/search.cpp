@@ -10,9 +10,9 @@
 #include <assert.h>
 
 
-constexpr int INF = 1000000;
 
-std::vector<std::vector<Move>> killerMoves(MAX_DEPTH, std::vector<Move>(2, Move(NONE, -1, -1)));
+
+std::vector<std::vector<Move>> killerMoves(MAX_DEPTH+1, std::vector<Move>(2, Move(NONE, -1, -1)));
 std::array<std::array<int, 64>, 64> historyHeuristics{};
 TranspositionTable TT;
 
@@ -36,7 +36,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     Move bestMove{NONE, -1, -1};
     int bestScore = -INF;
     
-    // Generate all legal moves
+    // Generate all  moves
     std::vector<Move> moves = board.generateMoves();
     
     if (moves.empty()) {
@@ -64,7 +64,9 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
         }
     }
     
-    // Iterative Deepening Search
+    // ------------------------------------------------------------------------------------
+    //                          ITERATIVE DEEPENING SEARCH
+    // ------------------------------------------------------------------------------------
     for (int depth = 1; depth <= maxDepth; depth++) {
         // Skip time check on depth 1, always do at least one ply
         if (depth > 1 && timeForThinking > 0) {
@@ -89,14 +91,38 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
         Move iterationBestMove = bestMove; // Start with previous best
         
         // Move ordering: start with previous best move
-        std::vector<Move> orderedMoves = moves;
-        auto it = std::find(orderedMoves.begin(), orderedMoves.end(), bestMove);
-        if (it != orderedMoves.end()) {
-            std::iter_swap(orderedMoves.begin(), it);
+        // std::vector<Move> orderedMoves = moves;
+        // auto it = std::find(orderedMoves.begin(), orderedMoves.end(), bestMove);
+        // if (it != orderedMoves.end()) {
+        //     std::iter_swap(orderedMoves.begin(), it);
+        // }
+
+        // Move Ordering for Root Search
+        for(Move &move : moves) {
+            
+            if(move==bestMove) {
+                move.heuristicScore += 5000;
+            }
+            
+            // 1. MVV-LVA
+            if(move.capture) {
+                move.heuristicScore += 1000 + (Evaluation::pieceValue[move.capture & 7] * 10 - Evaluation::pieceValue[move.piece & 7]);
+            }
+
+            // 2. Killers
+            if(move == killerMoves[depth][0]) move.heuristicScore += 800;
+            if(move == killerMoves[depth][1]) move.heuristicScore += 700;
+
+            // 3. History Heuristics
+            move.heuristicScore += historyHeuristics[move.from][move.to];
         }
+        std::sort(moves.begin(), moves.end(), [](const Move& m1, const Move& m2) {
+            return m1.heuristicScore > m2.heuristicScore;
+        });
+
         
         // Search all moves at this depth
-        for (const Move& move : orderedMoves) {
+        for (const Move& move : moves) {
             Gamestate prevdata = {
                 board.sideToMove,
                 board.enPassantSquare,
@@ -147,10 +173,21 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
         bestScore = iterationBestScore;
 
         int hashFull = TT.hashfull();
+
+        auto currentTime = std::chrono::steady_clock::now();
+        auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            currentTime - startTime).count();
+        
+        uint64_t nps = 0;
+        if (elapsedMs > 0) {
+            nps = (nodeCount * 1000) / elapsedMs; // nodes per second
+        }
+
         // Output information
         std::cout << "info depth " << depth 
                   << " score cp " << bestScore
                   << " nodes " << nodeCount << " hashfull " << hashFull
+                  << " nps " << nps
                   << " pv " << moveToUCI(bestMove) << "\n" << std::flush;
     }
     
@@ -241,11 +278,6 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
         if(move == tempMove) {
             score += 1500;
         }
-        // Color c = getPieceColor(move.piece);
-        // int targetKingSquare = c == BLACK? board.whiteKingSquare : board.blackKingSquare;
-        // if(board.tryMove(move) && board.isSquareAttacked(targetKingSquare, c)) {
-        //     score += 500;
-        // }
 
         if(move == killerMoves[depth][0]) score += 800;
         if(move == killerMoves[depth][1]) score += 700;

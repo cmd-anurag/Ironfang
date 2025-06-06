@@ -16,7 +16,7 @@ void initAttackTables() {
     // Initialize knight attacks
     for (int sq = 0; sq < 64; ++sq) {
         uint64_t attacks = 0;
-        int rank = sq / 8, file = sq % 8;
+        int rank = sq / 8, file = sq & 7;
         
         int knightMoves[8][2] = {{-2,-1}, {-2,1}, {-1,-2}, {-1,2}, {1,-2}, {1,2}, {2,-1}, {2,1}};
         for (auto& move : knightMoves) {
@@ -31,7 +31,7 @@ void initAttackTables() {
     // Initialize king attacks
     for (int sq = 0; sq < 64; ++sq) {
         uint64_t attacks = 0;
-        int rank = sq / 8, file = sq % 8;
+        int rank = sq / 8, file = sq & 7;
         
         for (int dr = -1; dr <= 1; ++dr) {
             for (int df = -1; df <= 1; ++df) {
@@ -47,7 +47,7 @@ void initAttackTables() {
     
     // Initialize pawn attacks
     for (int sq = 0; sq < 64; ++sq) {
-        int rank = sq / 8, file = sq % 8;
+        int rank = sq / 8, file = sq & 7;
         
         // White pawn attacks
         if (rank > 0) {
@@ -123,7 +123,7 @@ inline int BitBoard::popLSB(uint64_t& bb) const {
 
 uint64_t BitBoard::getRookAttacks(int square, uint64_t occupied) const {
     uint64_t attacks = 0;
-    int rank = square / 8, file = square % 8;
+    int rank = square / 8, file = square & 7;
     
     // Horizontal attacks
     for (int f = file + 1; f < 8; ++f) {
@@ -154,7 +154,7 @@ uint64_t BitBoard::getRookAttacks(int square, uint64_t occupied) const {
 
 uint64_t BitBoard::getBishopAttacks(int square, uint64_t occupied) const {
     uint64_t attacks = 0;
-    int rank = square / 8, file = square % 8;
+    int rank = square / 8, file = square & 7;
     
     // Diagonal attacks
     int directions[4][2] = {{1,1}, {1,-1}, {-1,1}, {-1,-1}};
@@ -554,7 +554,7 @@ bool BitBoard::makeMove(const Move &move) {
     };
 
     if(enPassantSquare != -1) {
-        int file = enPassantSquare % 8;
+        int file = enPassantSquare & 7;
         zobristKey ^= zobristEnPassant[file];
     }
     enPassantSquare = -1;
@@ -643,7 +643,7 @@ bool BitBoard::makeMove(const Move &move) {
             if(abs(move.from - move.to) == 16) {
                 enPassantSquare = move.from + (sideToMove == WHITE? -8 : 8);
                 // zobrist changes
-                int file = enPassantSquare % 8;
+                int file = enPassantSquare & 7;
                 zobristKey ^= zobristEnPassant[file];
             }
 

@@ -224,14 +224,16 @@ void uciLoop() {
             }
             
             try {
+                
                 Move bestMove = Search::findBestMove(board, maxDepth, timeForMove);
                 
                 if (bestMove.from != -1) {
                     std::cout << "bestmove " << moveToUCI(bestMove) << "\n" << std::flush;
                 } else if (fallbackMove.from != -1) {
+                    std::cout << "info string Using fallback move\n" << std::flush;
                     std::cout << "bestmove " << moveToUCI(fallbackMove) << "\n" << std::flush;
                 } else {
-                    // Absolute last resort
+                    std::cout << "info string Using a1a1 fallback\n" << std::flush;
                     std::cout << "bestmove a1a1\n" << std::flush;
                 }
             }
