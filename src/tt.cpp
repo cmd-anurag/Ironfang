@@ -55,34 +55,54 @@ void TranspositionTable::store(uint64_t zobristKey, int depth, int eval,
                                TT_FLAG flag, const Move &bestMove)
 {
     ++totalStoreAttempts;
-
     size_t index = zobristKey & TT_MASK;
     TTEntry &entry = table[index];
 
     bool isOverwrite = (entry.key != 0 && entry.key != zobristKey);
 
-    // If you want to prevent overwriting a real (positive-depth) entry
-    // with a quiescence (negative-depth) entry, uncomment:
-    // if (depth < 0 && entry.depth > 0 && entry.key != zobristKey) {
-    //     return;
-    // }
+    // Prevent quiescence (depth<0) from wiping out real searches
+    if (depth < 0 && entry.depth > 0 && entry.key != zobristKey)
+        return;
 
-    // Either empty slot or deeper search => store
-    if (entry.key != zobristKey || entry.depth <= depth) {
-        if (isOverwrite) ++overwritten;
-        entry.key = zobristKey;
-        entry.depth = depth;
-        entry.eval = eval;
-        entry.flag = flag;
+    // --- start replacement-policy patch ---
+    bool shouldReplace = false;
+
+    if (entry.key == 0) {
+        // Empty slot
+        shouldReplace = true;
+    }
+    else if (entry.key == zobristKey) {
+        // Same position: always allow updates for deeper or better moves
+        shouldReplace = (depth >= entry.depth);
+    }
+    else {
+        // Different key: compare old vs new “priority score”
+        int ageDiff = currentAge - entry.age;
+        int oldScore = entry.depth - ageDiff;
+        int newScore = depth;  // fresh entry has no age penalty
+
+        shouldReplace = (newScore >= oldScore);
+    }
+    // --- end replacement-policy patch ---
+
+    if (shouldReplace) {
+        if (entry.key == 0)       ++entriesOccupied;
+        else if (isOverwrite)     ++overwritten;
+
+        entry.key      = zobristKey;
+        entry.depth    = depth;
+        entry.eval     = eval;
+        entry.flag     = flag;
         entry.bestMove = bestMove;
-        entry.age = currentAge; // record current search age
+        entry.age      = currentAge;
         ++actualStores;
     }
-    // Always preserve best move if the position matches
     else if (entry.key == zobristKey && bestMove.piece != NONE) {
+        // still update the move if it’s a better move for same position
         entry.bestMove = bestMove;
     }
 }
+
 
 void TranspositionTable::clear() {
     for (size_t i = 0; i < TT_SIZE; ++i)

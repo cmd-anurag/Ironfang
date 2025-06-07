@@ -197,31 +197,8 @@ void uciLoop() {
             }
             
             // Log intentions
-            std::cout << "info string Starting search with time=" << timeForMove 
-                      << "ms maxDepth=" << maxDepth << "\n" << std::flush;
-            
-            // Set fallback move
-            Move fallbackMove = Move{NONE, -1, -1};
-            std::vector<Move> moves = board.generateMoves();
-            for (const Move& move : moves) {
-                Gamestate prevdata = {
-                    board.sideToMove,
-                    board.enPassantSquare,
-                    board.whiteKingsideCastle,
-                    board.whiteQueensideCastle,
-                    board.blackKingsideCastle,
-                    board.blackQueensideCastle,
-                    board.whiteKingSquare,
-                    board.blackKingSquare,
-                    board.zobristKey
-                };
-                
-                if (board.makeMove(move)) {
-                    board.unmakeMove(move, prevdata);
-                    fallbackMove = move;
-                    break;
-                }
-            }
+            // std::cout << "info string Starting search with time=" << timeForMove 
+            //           << "ms maxDepth=" << maxDepth << "\n" << std::flush;
             
             try {
                 
@@ -229,21 +206,16 @@ void uciLoop() {
                 
                 if (bestMove.from != -1) {
                     std::cout << "bestmove " << moveToUCI(bestMove) << "\n" << std::flush;
-                } else if (fallbackMove.from != -1) {
-                    std::cout << "info string Using fallback move\n" << std::flush;
-                    std::cout << "bestmove " << moveToUCI(fallbackMove) << "\n" << std::flush;
-                } else {
+                }
+                else {
                     std::cout << "info string Using a1a1 fallback\n" << std::flush;
                     std::cout << "bestmove a1a1\n" << std::flush;
                 }
             }
             catch (...) {
                 // Emergency fallback
-                if (fallbackMove.from != -1) {
-                    std::cout << "bestmove " << moveToUCI(fallbackMove) << "\n" << std::flush;
-                } else {
-                    std::cout << "bestmove a1a1\n" << std::flush;
-                }
+                std::cout << "info string Using a1a1 fallback\n" << std::flush;
+                std::cout << "bestmove a1a1\n" << std::flush;
             }
         }
         else if (token == "quit") {

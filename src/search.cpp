@@ -189,6 +189,17 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
                   << " nodes " << nodeCount << " hashfull " << hashFull
                   << " nps " << nps
                   << " pv " << moveToUCI(bestMove) << "\n" << std::flush;
+
+        // TT - stats
+        std::cout << "info string TT: depth=" << depth
+          << " occ=" << TT.entriesOccupied
+          << " (" << (100.0 * TT.entriesOccupied / TT_SIZE) << "%)"
+          << " hits=" << TT.hitCount
+          << " lookups=" << TT.lookupCount
+          << " hitrate=" << (100.0 * TT.hitCount / std::max(TT.lookupCount, (uint64_t)1ull)) << "%"
+          << " overwrites=" << TT.overwritten
+          << " stores=" << TT.actualStores
+          << std::endl;
     }
     
     return bestMove;
@@ -208,9 +219,9 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
     Color opponent = (board.sideToMove == WHITE) ? BLACK : WHITE;
     bool inCheck = board.isSquareAttacked(kingSq, opponent);
 
-    if (depth >= 3 && !inCheck && hasNonPawnMaterial(board, board.sideToMove) && 
+    if (depth >= 3 && !inCheck && hasNonPawnMaterial(board, board.sideToMove) &&
     beta < MATE_THRESHOLD && alpha > -MATE_THRESHOLD) {
-        // Make a null move (skip turn)
+        // snapshot all mutable state
         Gamestate prevState = {
             board.sideToMove,
             board.enPassantSquare,
@@ -222,28 +233,43 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
             board.blackKingSquare,
             board.zobristKey
         };
-        // uint64_t nullKey = board.zobristKey;
-        // Skip turn by just changing side to move and zobrist key
-        board.sideToMove = (board.sideToMove == WHITE) ? BLACK : WHITE;
+
+        // apply null move
+        board.sideToMove = (prevState.sideToMove == WHITE ? BLACK : WHITE);
         board.zobristKey ^= zobristBlackToMove;
-        board.enPassantSquare = -1; // Reset en passant
-        
-        // Reduced depth for null-move - R=2 works well as a starting point
-        int R = 2;
-        if (depth > 6) R = 3; // Deeper reduction for deeper searches
-        
-        // Search with reduced depth
-        int nullMoveScore = -minimaxAlphaBeta(board, depth - 1 - R, -beta, -beta + 1);
-        
-        // Restore board state
-        board.sideToMove = prevState.sideToMove;
-        board.enPassantSquare = prevState.enPassantSquare;
-        board.zobristKey = prevState.zobristKey;
-        // assert(board.zobristKey == nullKey);
-        // If null-move search indicates position is too good, prune this branch
-        if (nullMoveScore >= beta)
+        if (prevState.enPassantSquare != -1) {
+            int epFile = prevState.enPassantSquare & 7;
+            board.zobristKey ^= zobristEnPassant[epFile];
+        }
+        board.enPassantSquare = -1;
+
+        // reduced-depth, null-window search
+        int R = (depth > 6 ? 3 : 2);
+        int nullMoveScore = -minimaxAlphaBeta(
+            board,
+            depth - 1 - R,
+            -beta,
+            -beta + 1
+        );
+
+        // restore *everything*
+        board.sideToMove           = prevState.sideToMove;
+        board.enPassantSquare      = prevState.enPassantSquare;
+        board.whiteKingsideCastle  = prevState.whiteKingsideCastle;
+        board.whiteQueensideCastle = prevState.whiteQueensideCastle;
+        board.blackKingsideCastle  = prevState.blackKingsideCastle;
+        board.blackQueensideCastle = prevState.blackQueensideCastle;
+        board.whiteKingSquare      = prevState.whiteKingSquare;
+        board.blackKingSquare      = prevState.blackKingSquare;
+        board.zobristKey           = prevState.zobristKey;
+
+        // prune on fail-high
+        if (nullMoveScore >= beta) {
+            TT.store(board.zobristKey, depth, beta, TT_LOWER, Move(NONE, -1, -1));
             return beta;
+        }
     }
+
 
     if (depth <= 0) {
         return quiescenceSearch(board, alpha, beta);
@@ -351,6 +377,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
         board.unmakeMove(move, prevdata);
         ++moveIndex;
         // assert(board.zobristKey == originalKey);
+
         // Beta cutoff
         if (score >= beta) {
         
