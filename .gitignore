@@ -3,3 +3,4 @@ chess
 *.exe
 *.out
 /build/
+perf.data
