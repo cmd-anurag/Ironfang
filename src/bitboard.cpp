@@ -111,15 +111,7 @@ void BitBoard::setStartPosition() {
 
 
 
-inline int BitBoard::getLSB(uint64_t bb) const {
-    return __builtin_ctzll(bb);
-}
 
-inline int BitBoard::popLSB(uint64_t& bb) const {
-    int lsb = getLSB(bb);
-    bb &= bb - 1;
-    return lsb;
-}
 
 uint64_t BitBoard::getRookAttacks(int square, uint64_t occupied) const {
     uint64_t attacks = 0;
@@ -252,10 +244,11 @@ std::vector<Move> BitBoard::generateMoves() const {
     return moves;
 }
 
-void BitBoard::generateCaptures(std::vector<Move> &captures) const
+std::vector<Move> BitBoard::generateCaptures() const
 {
-    captures.clear();
-    
+    std::vector<Move> captures;
+    captures.reserve(36);
+
     Color color = sideToMove;
     uint64_t pieces = (color == WHITE) ? getWhitePieces() : getBlackPieces();
     uint64_t enemies = (color == WHITE) ? getBlackPieces() : getWhitePieces();
@@ -358,6 +351,7 @@ void BitBoard::generateCaptures(std::vector<Move> &captures) const
                 break;
         }
     }
+    return captures;
 }
 
 void BitBoard::generatePawnMoves(int square, std::vector<Move>& moves, Piece p, Color color) const {

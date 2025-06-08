@@ -66,7 +66,8 @@ class BitBoard {
         }
         bool setPositionFromFEN(const std::string& fen);
         std::vector<Move> generateMoves() const;
-        void generateCaptures(std::vector<Move> &captures) const;
+        std::vector<Move> generateCaptures() const;
+        
         bool isSquareAttacked(int square, Color opponentColor) const;
 
         bool makeMove(const Move &move);
@@ -77,8 +78,15 @@ class BitBoard {
 
         uint64_t getBlackPieces() const { return blackPawns | blackRooks | blackBishops | blackQueens | blackKnights | blackKing; }
 
-        int getLSB(uint64_t bb) const;
-        int popLSB(uint64_t& bb) const;
+        inline int getLSB(uint64_t bb) const {
+            return __builtin_ctzll(bb);
+        }
+
+        inline int popLSB(uint64_t& bb) const {
+            int lsb = getLSB(bb);
+            bb &= bb - 1;
+            return lsb;
+        }
 
         friend class Evaluation;
 

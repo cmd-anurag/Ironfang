@@ -464,23 +464,29 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth) {
         alpha = standPat;
     
     // Generate capture moves
-    std::vector<Move> allMoves = board.generateMoves();
-    std::vector<Move> captures;
-    captures.reserve(36); // there can be a maximuum of 35 capture options 
+    // std::vector<Move> allMoves = board.generateMoves();
+    std::vector<Move> captures = board.generateCaptures();
 
-    for(Move &move : allMoves) {
+    // for(Move &move : allMoves) {
+    //     if(move == probeMove) {
+    //         move.heuristicScore += 10000;   
+    //     }
+
+
+    //     if(move.capture) {
+    //         move.heuristicScore += 1000 + (Evaluation::pieceValue[move.capture & 7] * 10 - Evaluation::pieceValue[move.piece & 7]);
+    //         captures.push_back(move);
+    //     }
+    // }
+
+    for(Move &move : captures) {
         if(move == probeMove) {
-            move.heuristicScore += 10000;   
+            move.heuristicScore += 1500;
         }
-
-
-        if(move.capture) {
-            move.heuristicScore += 1000 + (Evaluation::pieceValue[move.capture & 7] * 10 - Evaluation::pieceValue[move.piece & 7]);
-            captures.push_back(move);
-        }
+        move.heuristicScore += 1000 + Evaluation::pieceValue[move.capture & 7] * 10 - Evaluation::pieceValue[move.piece & 7];
     }
     
-    // 4. More aggressive delta pruning
+    // 4. delta pruning
     const int FUTILITY_MARGIN = 200;
     
     // Order captures by MVV-LVA

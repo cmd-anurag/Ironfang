@@ -30,7 +30,7 @@ void uciLoop() {
         iss >> token;
 
         if(token == "uci") {
-            std::cout << "id name IronfangT-Tablev5\n" << std::flush;
+            std::cout << "id name Ironfangv8\n" << std::flush;
             std::cout << "id author dark\n" << std::flush;
             std::cout << "uciok\n" << std::flush;
         }
