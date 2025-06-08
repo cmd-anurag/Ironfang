@@ -1,7 +1,7 @@
 
 # Ironfang ♞
 
-IronFang is a simple UCI-compatible chess engine written in C++. It was born out of boredom and curiosity and is a hobby-project.
+IronFang is a simple UCI-compatible chess engine written in C++.
 
 
 ## Project Structure
@@ -73,25 +73,29 @@ The engine is under active developement.
 
 - Full legal move generation, including castling, en passant, and promotion
 
-- Simple evaluation based on material balance
+- Simple evaluation based on material balance and piece-square tables
 
 - Negamax search with alpha-beta pruning
 
 - UCI protocol support for GUI integration
 
-#### Future Plans
-
+- Iterative deepening and time management
+ 
 - Quiescence search
 
 - Move ordering heuristics (MVV-LVA, killer moves, history heuristic)
 
 - Transposition tables using Zobrist Hashing
 
-- Improved evaluation: piece-square tables, king safety, pawn structure
+#### Future Plans
 
-- Iterative deepening and time management
+- Improved evaluation: king safety, pawn structure and positional understanding.
 
 - Syzygy/endgame tablebase integration
+
+- Opening Books
+
+- Magic Bitboards for slding pieces
 ## Authors
 
 - [Me](https://www.github.com/cmd-anurag)
