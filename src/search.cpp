@@ -9,9 +9,6 @@
 #include <chrono>
 #include <assert.h>
 
-
-
-
 std::vector<std::vector<Move>> killerMoves(MAX_DEPTH+1, std::vector<Move>(2, Move(NONE, -1, -1)));
 std::array<std::array<int, 64>, 64> historyHeuristics{};
 TranspositionTable TT;
@@ -99,6 +96,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
 
         // Move Ordering for Root Search
         for(Move &move : moves) {
+            move.heuristicScore = 0;
             
             if(move==bestMove) {
                 move.heuristicScore += 5000;
@@ -109,12 +107,6 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
                 move.heuristicScore += 1000 + (Evaluation::pieceValue[move.capture & 7] * 10 - Evaluation::pieceValue[move.piece & 7]);
             }
 
-            // 2. Killers
-            if(move == killerMoves[depth][0]) move.heuristicScore += 800;
-            if(move == killerMoves[depth][1]) move.heuristicScore += 700;
-
-            // 3. History Heuristics
-            move.heuristicScore += historyHeuristics[move.from][move.to];
         }
         std::sort(moves.begin(), moves.end(), [](const Move& m1, const Move& m2) {
             return m1.heuristicScore > m2.heuristicScore;
@@ -296,6 +288,8 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
 
     // Move Ordering
     for(Move &move : moves) {
+
+        move.heuristicScore = 0;
         int score = 0;
 
         if(move.capture) {
@@ -308,8 +302,6 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
         if(move == killerMoves[depth][0]) score += 800;
         if(move == killerMoves[depth][1]) score += 700;
 
-        score += historyHeuristics[move.from][move.to];
-        // so much dynamic programming here oof
 
         move.heuristicScore = score;
     }
@@ -324,7 +316,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
     int originalAlpha = alpha;
     Move bestMove(NONE, -1, -1);
 
-    int moveCount = 0;
+
     int moveIndex = 0;
     for (const Move& move : moves) {
         Gamestate prevdata = {
@@ -345,8 +337,6 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
         }
         foundLegalMove = true;
         
-        // Increment move counter
-        moveCount++;
 
         int score;
         
@@ -387,10 +377,6 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
                 killerMoves[depth][0] = move;
             }
 
-            // record in history heuristics
-            if(!move.capture) {
-                historyHeuristics[move.from][move.to] += depth * depth; // i'll try favoring deeper nodes
-            }
 
             // record a lower bound entry in TT
             TT.store(board.zobristKey,depth, beta, TT_LOWER, move);
@@ -464,20 +450,8 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth) {
         alpha = standPat;
     
     // Generate capture moves
-    // std::vector<Move> allMoves = board.generateMoves();
     std::vector<Move> captures = board.generateCaptures();
 
-    // for(Move &move : allMoves) {
-    //     if(move == probeMove) {
-    //         move.heuristicScore += 10000;   
-    //     }
-
-
-    //     if(move.capture) {
-    //         move.heuristicScore += 1000 + (Evaluation::pieceValue[move.capture & 7] * 10 - Evaluation::pieceValue[move.piece & 7]);
-    //         captures.push_back(move);
-    //     }
-    // }
 
     for(Move &move : captures) {
         if(move == probeMove) {

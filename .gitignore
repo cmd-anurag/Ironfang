@@ -3,4 +3,5 @@ chess
 *.exe
 *.out
 /build/
+/build-android/
 perf.data
