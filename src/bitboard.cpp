@@ -1,5 +1,6 @@
 #include "bitboard.h"
 #include "zobrist.h"
+#include "magic.h"
 #include<iostream>
 #include <sstream>
 #include <string>
@@ -15,7 +16,7 @@ static uint64_t pawnAttacks[2][64]; // [color][square]
 void initAttackTables() {
     // Initialize knight attacks
     for (int sq = 0; sq < 64; ++sq) {
-        uint64_t attacks = 0;
+        uint64_t attacks = 0ULL;
         int rank = sq / 8, file = sq & 7;
         
         int knightMoves[8][2] = {{-2,-1}, {-2,1}, {-1,-2}, {-1,2}, {1,-2}, {1,2}, {2,-1}, {2,1}};
@@ -30,7 +31,7 @@ void initAttackTables() {
     
     // Initialize king attacks
     for (int sq = 0; sq < 64; ++sq) {
-        uint64_t attacks = 0;
+        uint64_t attacks = 0ULL;
         int rank = sq / 8, file = sq & 7;
         
         for (int dr = -1; dr <= 1; ++dr) {
@@ -69,6 +70,7 @@ BitBoard::BitBoard() {
         initAttackTables();
         tablesInitialized = true;
     }
+    initMagicTables();
     initZobrist();
     setStartPosition();
 }
@@ -114,55 +116,11 @@ void BitBoard::setStartPosition() {
 
 
 uint64_t BitBoard::getRookAttacks(int square, uint64_t occupied) const {
-    uint64_t attacks = 0;
-    int rank = square / 8, file = square & 7;
-    
-    // Horizontal attacks
-    for (int f = file + 1; f < 8; ++f) {
-        int sq = rank * 8 + f;
-        attacks |= 1ULL << sq;
-        if (occupied & (1ULL << sq)) break;
-    }
-    for (int f = file - 1; f >= 0; --f) {
-        int sq = rank * 8 + f;
-        attacks |= 1ULL << sq;
-        if (occupied & (1ULL << sq)) break;
-    }
-    
-    // Vertical attacks
-    for (int r = rank + 1; r < 8; ++r) {
-        int sq = r * 8 + file;
-        attacks |= 1ULL << sq;
-        if (occupied & (1ULL << sq)) break;
-    }
-    for (int r = rank - 1; r >= 0; --r) {
-        int sq = r * 8 + file;
-        attacks |= 1ULL << sq;
-        if (occupied & (1ULL << sq)) break;
-    }
-    
-    return attacks;
+    return ::getRookAttacks(square, occupied); // use magic-based version
 }
 
 uint64_t BitBoard::getBishopAttacks(int square, uint64_t occupied) const {
-    uint64_t attacks = 0;
-    int rank = square / 8, file = square & 7;
-    
-    // Diagonal attacks
-    int directions[4][2] = {{1,1}, {1,-1}, {-1,1}, {-1,-1}};
-    for (auto& dir : directions) {
-        for (int i = 1; i < 8; ++i) {
-            int newRank = rank + i * dir[0];
-            int newFile = file + i * dir[1];
-            if (newRank < 0 || newRank >= 8 || newFile < 0 || newFile >= 8) break;
-            
-            int sq = newRank * 8 + newFile;
-            attacks |= 1ULL << sq;
-            if (occupied & (1ULL << sq)) break;
-        }
-    }
-    
-    return attacks;
+    return ::getBishopAttacks(square, occupied); // use magic-based version
 }
 
 uint64_t BitBoard::getQueenAttacks(int square, uint64_t occupied) const {
