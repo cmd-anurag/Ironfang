@@ -132,7 +132,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
             }
             
             // Normal search with full alpha-beta window
-            int score = -minimaxAlphaBeta(board, depth - 1, -beta, -alpha);
+            int score = -minimaxAlphaBeta(board, depth - 1, -beta, -alpha, 0);
             
             board.unmakeMove(move, prevdata);
             
@@ -197,7 +197,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     return bestMove;
 }
 
-int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
+int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, int ply) {
     ++nodeCount; // an efficiency metric
 
     // before doing anything check T-table
@@ -241,7 +241,8 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
             board,
             depth - 1 - R,
             -beta,
-            -beta + 1
+            -beta + 1,
+            ply+1
         );
 
         // restore *everything*
@@ -264,7 +265,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
 
 
     if (depth <= 0) {
-        return quiescenceSearch(board, alpha, beta);
+        return quiescenceSearch(board, alpha, beta, 0, ply);
     }
 
     if (board.repetitionMap[board.zobristKey] >= 3) {
@@ -281,7 +282,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
 
         if (board.isSquareAttacked(kingSq, opp)) {
             // Checkmate: encode ply distance so mate in 1 is better than mate in 2
-            return -INF + (MAX_DEPTH - depth);
+            return -INF + ply;
         }
         return 0; // stalemate
     }
@@ -296,11 +297,11 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
             score += 1000 + (Evaluation::pieceValue[move.capture & 7] * 10 - Evaluation::pieceValue[move.piece & 7]);
         }
         if(move == tempMove) {
-            score += 1500;
+            score += 15000;
         }
 
-        if(move == killerMoves[depth][0]) score += 800;
-        if(move == killerMoves[depth][1]) score += 700;
+        if(move == killerMoves[depth][0]) score += 10000;
+        if(move == killerMoves[depth][1]) score += 9000;
 
 
         move.heuristicScore = score;
@@ -353,15 +354,15 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
         
         if (reduction > 0) {
             // Try reduced depth search first
-            score = -minimaxAlphaBeta(board, depth - 1 - reduction, -alpha - 1, -alpha);
+            score = -minimaxAlphaBeta(board, depth - 1 - reduction, -alpha - 1, -alpha, ply+1);
             
             // If it looks promising, do a full search
             if (score > alpha) {
-                score = -minimaxAlphaBeta(board, depth - 1, -beta, -alpha);
+                score = -minimaxAlphaBeta(board, depth - 1, -beta, -alpha, ply+1);
             }
         } else {
             // Regular search for important moves
-            score = -minimaxAlphaBeta(board, depth - 1, -beta, -alpha);
+            score = -minimaxAlphaBeta(board, depth - 1, -beta, -alpha, ply+1);
         }
         
         board.unmakeMove(move, prevdata);
@@ -398,7 +399,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
         Color opp = (board.sideToMove == WHITE) ? BLACK : WHITE;
 
         int eval = board.isSquareAttacked(kingSq, opp)
-        ? -INF + (MAX_DEPTH - depth)  // checkmate
+        ? -INF + ply  // checkmate
         : 0;             // stalemate
 
         TT.store(board.zobristKey, depth, eval, TT_EXACT, Move(NONE, -1, -1));
@@ -419,7 +420,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta) {
     return alpha;
 }
 
-int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth) {
+int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, int ply) {
     ++nodeCount;
 
     Move probeMove;
@@ -429,7 +430,7 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth) {
     }
     
     // 1. More aggressive depth limit
-    if (qdepth >= 4) {  // Reduce from 6 to 4
+    if (qdepth >= 4) { 
         int eval = Evaluation::evaluate(board);
         TT.store(board.zobristKey, -qdepth, eval, TT_EXACT, Move(NONE, -1, -1));
         return eval;
@@ -455,7 +456,7 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth) {
 
     for(Move &move : captures) {
         if(move == probeMove) {
-            move.heuristicScore += 1500;
+            move.heuristicScore += 15000;
         }
         move.heuristicScore += 1000 + Evaluation::pieceValue[move.capture & 7] * 10 - Evaluation::pieceValue[move.piece & 7];
     }
@@ -496,7 +497,7 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth) {
         if (!board.makeMove(move))
             continue;
             
-        int score = -quiescenceSearch(board, -beta, -alpha, qdepth + 1);
+        int score = -quiescenceSearch(board, -beta, -alpha, qdepth + 1, ply+1);
         board.unmakeMove(move, prevdata);
         
         if (score >= beta) {
