@@ -668,7 +668,7 @@ bool BitBoard::makeMove(const Move &move) {
 
     sideToMove = (sideToMove == WHITE)? BLACK : WHITE;
     zobristKey ^= zobristBlackToMove;
-    repetitionMap[zobristKey]++;
+
 
     if(sideToMove == BLACK) {
         if(isSquareAttacked(whiteKingSquare, BLACK)){
@@ -744,8 +744,7 @@ void BitBoard::unmakeMove(const Move &move, const Gamestate &prevState) {
             setPiece(NONE, move.to);
         }
     }
-    if (--repetitionMap[zobristKey] == 0)
-        repetitionMap.erase(zobristKey);
+    
         
     zobristKey = prevState.zobristKey;
 }

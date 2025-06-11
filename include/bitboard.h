@@ -6,7 +6,6 @@
 #include "move.h"
 #include <vector>
 #include <cstdint>
-#include <unordered_map>
 
 class Evaluation;
 
@@ -24,7 +23,8 @@ class BitBoard {
         int blackKingSquare;
 
         uint64_t zobristKey;
-        std::unordered_map<uint64_t, int> repetitionMap;
+        uint64_t repetitionPath[1024];
+        int pathDepth = 0;
 
         BitBoard();
         void setStartPosition();

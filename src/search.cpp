@@ -137,7 +137,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
             if (!board.makeMove(move)) {
                 continue;
             }
-            
+            board.pathDepth = 0;
             // Normal search with full alpha-beta window
             int score = -minimaxAlphaBeta(board, depth - 1, -beta, -alpha, 0);
             
@@ -190,16 +190,16 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
                   << " pv " << moveToUCI(bestMove) << "\n" << std::flush;
 
         // TT - stats
-        std::cout << "info string TT: depth=" << depth
-          << " occ=" << TT.entriesOccupied
-          << " (" << (100.0 * TT.entriesOccupied / TT_SIZE) << "%)"
-          << " hits=" << TT.hitCount
-          << " lookups=" << TT.lookupCount
-          << " hitrate=" << (100.0 * TT.hitCount / std::max(TT.lookupCount, (uint64_t)1ull)) << "%"
-          << " Key matches=" << (100.0 * TT.keyMatchCount / std::max(TT.lookupCount, (uint64_t)1ull)) << "%"
-          << " overwrites=" << TT.overwritten
-          << " stores=" << TT.actualStores
-          << std::endl;
+        // std::cout << "info string TT: depth=" << depth
+        //   << " occ=" << TT.entriesOccupied
+        //   << " (" << (100.0 * TT.entriesOccupied / TT_SIZE) << "%)"
+        //   << " hits=" << TT.hitCount
+        //   << " lookups=" << TT.lookupCount
+        //   << " hitrate=" << (100.0 * TT.hitCount / std::max(TT.lookupCount, (uint64_t)1ull)) << "%"
+        //   << " Key matches=" << (100.0 * TT.keyMatchCount / std::max(TT.lookupCount, (uint64_t)1ull)) << "%"
+        //   << " overwrites=" << TT.overwritten
+        //   << " stores=" << TT.actualStores
+        //   << std::endl;
 
           
     }
@@ -210,10 +210,23 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
 int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, int ply) {
     ++nodeCount; // an efficiency metric
 
+    board.repetitionPath[board.pathDepth++] = board.zobristKey;
+    assert(board.pathDepth <= 1024);
+
+    int rep = 0;
+    for (int i = 0; i < board.pathDepth; ++i) {
+        if (board.repetitionPath[i] == board.zobristKey && ++rep >= 3) {
+            --board.pathDepth;
+            return 0;
+        }
+    }
+
     // before doing anything check T-table
     Move tempMove = Move(NONE, -1, -1);
     int tempEval;
+
     if(TT.probe(board.zobristKey, depth, alpha, beta, tempEval, tempMove)) {
+        --board.pathDepth;
         return tempEval;
     }
 
@@ -269,18 +282,18 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         // prune on fail-high
         if (nullMoveScore >= beta) {
             TT.store(board.zobristKey, depth, beta, TT_LOWER, Move(NONE, -1, -1));
+            --board.pathDepth;
             return beta;
         }
     }
 
 
     if (depth <= 0) {
+        --board.pathDepth;
         return quiescenceSearch(board, alpha, beta, 0, ply);
     }
 
-    if (board.repetitionMap[board.zobristKey] >= 3) {
-        return 0; // Draw score
-    }
+    
 
     std::vector<Move> moves = board.generateMoves();
     if (moves.empty()) {
@@ -292,8 +305,10 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
 
         if (board.isSquareAttacked(kingSq, opp)) {
             // Checkmate: encode ply distance so mate in 1 is better than mate in 2
+            --board.pathDepth;
             return -INF + ply;
         }
+        --board.pathDepth;
         return 0; // stalemate
     }
 
@@ -374,7 +389,6 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
             // Regular search for important moves
             score = -minimaxAlphaBeta(board, depth - 1, -beta, -alpha, ply+1);
         }
-        
         board.unmakeMove(move, prevdata);
         ++moveIndex;
         // assert(board.zobristKey == originalKey);
@@ -392,6 +406,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
             // record a lower bound entry in TT
             TT.store(board.zobristKey,depth, beta, TT_LOWER, move);
 
+            --board.pathDepth;
             return beta;
         }
 
@@ -413,7 +428,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         : 0;             // stalemate
 
         TT.store(board.zobristKey, depth, eval, TT_EXACT, Move(NONE, -1, -1));
-
+        --board.pathDepth;
         return eval;
     }
 
@@ -426,7 +441,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     }
 
     TT.store(board.zobristKey, depth, alpha, flag, bestMove);
-
+    --board.pathDepth;
     return alpha;
 }
 

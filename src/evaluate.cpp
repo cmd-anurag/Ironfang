@@ -132,11 +132,21 @@ int Evaluation::evaluate(const BitBoard &board) {
         }
     }
 
-    // // Draw penalty
-    // if(board.repetitionMap[board.zobristKey] >= 3) {
-    //     int penalty = board.sideToMove == WHITE? -100 : 100;
-    //     score += penalty;
-    // }
+    // Draw penalty
+    int occurrences = 0;
 
+    for (int i = 0; i < board.pathDepth; ++i) {
+        if (board.repetitionPath[i] == board.zobristKey) {
+            occurrences++;
+        }
+    }
+
+    // If this is the second time this position appears in the current search path,
+    // apply a penalty. The search itself handles the 3rd occurrence as a draw (score 0).
+    if (occurrences == 2) {
+        int penalty = board.sideToMove == WHITE? -100 : 100;
+        score += penalty;
+    }
+    
     return (board.sideToMove == WHITE) ? score : -score;
 }
