@@ -18,8 +18,12 @@ uint64_t nodeCount = 0;
 Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     // Reset counters
     nodeCount = 0;
-    TT.hitCount = 0;
     TT.lookupCount = 0;
+    TT.hitCount = 0;
+    TT.keyMatchCount = 0;
+    TT.totalStoreAttempts = 0;
+    TT.actualStores = 0;
+    TT.overwritten = 0;
     TT.currentAge++;
     
     // Start timing
@@ -65,6 +69,9 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     //                          ITERATIVE DEEPENING SEARCH
     // ------------------------------------------------------------------------------------
     for (int depth = 1; depth <= maxDepth; depth++) {
+
+        
+
         // Skip time check on depth 1, always do at least one ply
         if (depth > 1 && timeForThinking > 0) {
             auto currentTime = std::chrono::steady_clock::now();
@@ -189,11 +196,14 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
           << " hits=" << TT.hitCount
           << " lookups=" << TT.lookupCount
           << " hitrate=" << (100.0 * TT.hitCount / std::max(TT.lookupCount, (uint64_t)1ull)) << "%"
+          << " Key matches=" << (100.0 * TT.keyMatchCount / std::max(TT.lookupCount, (uint64_t)1ull)) << "%"
           << " overwrites=" << TT.overwritten
           << " stores=" << TT.actualStores
           << std::endl;
+
+          
     }
-    
+
     return bestMove;
 }
 

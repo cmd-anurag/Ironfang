@@ -18,7 +18,8 @@ bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int be
     TTEntry &entry = table[index];
 
     // Optional: check if entry is from current search age
-    if (entry.key == zobristKey && entry.age == currentAge) {
+    if (entry.key == zobristKey) {
+        ++keyMatchCount;
         // Always extract the move if it's the correct position
         outMove = entry.bestMove;
 
@@ -119,7 +120,7 @@ size_t TranspositionTable::countOccupied() const {
 
 int TranspositionTable::hashfull() const
 {
-    // Using actualStores vs overwritten to estimate occupancy
-    int estimatedOccupancy = actualStores - overwritten;
-    return std::min((unsigned long)1000, std::max((unsigned long)0, (estimatedOccupancy * 1000) / TT_SIZE));
+    // Calculate hashfull based on the total number of occupied entries
+    if (TT_SIZE == 0) return 0; // Avoid division by zero
+    return static_cast<int>((static_cast<uint64_t>(entriesOccupied) * 1000) / TT_SIZE);
 }

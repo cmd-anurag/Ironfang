@@ -1,4 +1,6 @@
 #include "evaluate.h"
+#include "bitboard.h"
+#include <unordered_map>
 
 const int pawnPST[64] = {
     0,  0,  0,  0,  0,  0,  0,  0,
@@ -129,6 +131,12 @@ int Evaluation::evaluate(const BitBoard &board) {
             score -= pieceValue[basePiece] + PST[basePiece - 1][mirror(square)];
         }
     }
+
+    // // Draw penalty
+    // if(board.repetitionMap[board.zobristKey] >= 3) {
+    //     int penalty = board.sideToMove == WHITE? -100 : 100;
+    //     score += penalty;
+    // }
 
     return (board.sideToMove == WHITE) ? score : -score;
 }

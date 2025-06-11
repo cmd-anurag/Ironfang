@@ -45,6 +45,7 @@ class TranspositionTable {
         void clear();
         uint64_t lookupCount = 0; 
         uint64_t hitCount    = 0;
+        uint64_t keyMatchCount   = 0;
         size_t totalStoreAttempts = 0;
         size_t actualStores = 0;
         size_t overwritten = 0;
