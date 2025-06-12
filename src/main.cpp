@@ -5,14 +5,23 @@
 #include "mailbox.h"
 #include "uci.h"
 #include "zobrist.h"
+#include "perft.h"
 #include <iostream>
 #include <vector>
 
-
 int main() {
-    uciLoop();
-    // BitBoard board;
+    // uciLoop();
+    BitBoard board;
     // board.setStartPosition();
+    board.setPositionFromFEN("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq -");
+
+    std::cout << perft(board, 1) << std::endl;
+    std::cout << perft(board, 2) << std::endl;
+    std::cout << perft(board, 3) << std::endl;
+    std::cout << perft(board, 4) << std::endl;
+    // std::cout << perft(board, 5) << std::endl;
+
+
     // Move move = Search::findBestMove(board, MAX_DEPTH, 5000);
     // std::cout << moveToAlgrebraic(move);
 
