@@ -17,8 +17,8 @@ bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int be
     size_t index = zobristKey & TT_MASK;
     TTEntry &entry = table[index];
 
-    // Optional: check if entry is from current search age
-    if (entry.key == zobristKey) {
+    // ABSOLUTELY DONT MESS AROUND HERE
+    if (entry.key == zobristKey && entry.age == currentAge) {
         ++keyMatchCount;
         // Always extract the move if it's the correct position
         outMove = entry.bestMove;

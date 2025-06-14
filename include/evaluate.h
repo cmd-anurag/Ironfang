@@ -2,13 +2,7 @@
 #include "board.h"
 #include "bitboard.h"
 
-extern const int pawnPST[64];
-extern const int knightPST[64];
-extern const int bishopPST[64];
-extern const int rookPST[64];
-extern const int queenPST[64];
-extern const int kingMdPST[64];
-extern const int kingEgPST[64];
+
 
 extern const int *PST[7];
 
