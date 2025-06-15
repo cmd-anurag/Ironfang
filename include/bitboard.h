@@ -122,6 +122,15 @@ class BitBoard {
         }
         inline uint64_t getAllPieces() const { return getWhitePieces() | getBlackPieces(); }
 
+        // Bitboard utility functions
+        uint64_t getRookAttacks(int square, uint64_t occupied) const;
+        uint64_t getBishopAttacks(int square, uint64_t occupied) const;
+        uint64_t getQueenAttacks(int square, uint64_t occupied) const;
+        uint64_t getKnightAttacks(int square) const;
+        uint64_t getKingAttacks(int square) const;
+        uint64_t getPawnAttacks(int square, Color color) const;
+        
+
     private:
         uint64_t whitePawns, blackPawns;
         uint64_t whiteRooks, blackRooks;
@@ -155,13 +164,6 @@ class BitBoard {
         void generateKingMoves(int square, std::vector<Move>& moves, Piece p, Color color) const;
         void generateKnightMoves(int square, std::vector<Move>& moves, Piece p, Color color) const;
         
-        // Bitboard utility functions
-        uint64_t getRookAttacks(int square, uint64_t occupied) const;
-        uint64_t getBishopAttacks(int square, uint64_t occupied) const;
-        uint64_t getQueenAttacks(int square, uint64_t occupied) const;
-        uint64_t getKnightAttacks(int square) const;
-        uint64_t getKingAttacks(int square) const;
-        uint64_t getPawnAttacks(int square, Color color) const;
         
 };
 

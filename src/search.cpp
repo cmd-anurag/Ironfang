@@ -114,6 +114,8 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
                 move.heuristicScore += 1000 + (Evaluation::pieceValue[move.capture & 7] * 10 - Evaluation::pieceValue[move.piece & 7]);
             }
 
+            if(move.promotion) move.heuristicScore += 4000;
+
         }
         std::sort(moves.begin(), moves.end(), [](const Move& m1, const Move& m2) {
             return m1.heuristicScore > m2.heuristicScore;
@@ -324,6 +326,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         if(move == tempMove) {
             score += 15000;
         }
+        if(move.promotion) score += 5000;
 
         if(move == killerMoves[depth][0]) score += 10000;
         if(move == killerMoves[depth][1]) score += 9000;
@@ -455,7 +458,7 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
     }
     
     // 1. More aggressive depth limit
-    if (qdepth >= 4) { 
+    if (qdepth >= 6) { 
         int eval = Evaluation::evaluate(board);
         TT.store(board.zobristKey, -qdepth, eval, TT_EXACT, Move(NONE, -1, -1));
         return eval;
