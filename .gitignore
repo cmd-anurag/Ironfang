@@ -3,5 +3,8 @@ chess
 *.exe
 *.out
 /build/
+/build-linux/
 /build-android/
+/build-windows/
+/dist/
 perf.data
