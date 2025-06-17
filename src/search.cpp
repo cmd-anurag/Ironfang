@@ -191,7 +191,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
                   << " nps " << nps
                   << " pv " << moveToUCI(bestMove) << "\n" << std::flush;
 
-        // TT - stats
+        // // TT - stats
         // std::cout << "info string TT: depth=" << depth
         //   << " occ=" << TT.entriesOccupied
         //   << " (" << (100.0 * TT.entriesOccupied / TT_SIZE) << "%)"
@@ -377,7 +377,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         int reduction = 0;
         if (depth >= 3 && moveIndex > 0 && isReducible) {
             reduction = 1;
-            if (depth >= 6 && moveIndex >= 4) reduction++;
+            if (depth >= 6 && moveIndex >= 4) reduction+=2;
         }
         
         if (reduction > 0) {
@@ -486,11 +486,12 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
         if(move == probeMove) {
             move.heuristicScore += 15000;
         }
+        if(move.promotion) move.heuristicScore += 5000;
         move.heuristicScore += 1000 + Evaluation::pieceValue[move.capture & 7] * 10 - Evaluation::pieceValue[move.piece & 7];
     }
     
     // 4. delta pruning
-    const int FUTILITY_MARGIN = 200;
+    const int FUTILITY_MARGIN = 250;
     
     // Order captures by MVV-LVA
     std::sort(captures.begin(), captures.end(), [](const Move& a, const Move& b) {
@@ -501,12 +502,12 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
     
     for (const Move& move : captures) {
         // Delta pruning - skip captures that can't improve alpha
-        if (standPat + Evaluation::pieceValue[move.capture&7] + FUTILITY_MARGIN <= alpha) {
+        if (standPat + Evaluation::pieceValue[move.capture & 7] + FUTILITY_MARGIN <= alpha) {
             continue;
         }
         
         // Skip obviously bad captures (losing material)
-        if (Evaluation::pieceValue[move.capture&7] < Evaluation::pieceValue[move.piece & 7] - 100) {
+        if (Evaluation::pieceValue[move.capture & 7] < Evaluation::pieceValue[move.piece & 7] - 100) {
             continue;
         }
         

@@ -4,13 +4,14 @@
 #include <unordered_map>
 
 
-const int *PST[7] = {pawnPST, rookPST, knightPST, bishopPST, queenPST, kingMdPST, kingEgPST};
+const int *PST[7] = {pawnPST, knightPST, bishopPST, rookPST, queenPST, kingMdPST, kingEgPST};
 
 
 
 class Board;
 class BitBoard;
 int evaluatePawnStructure(uint64_t white_pawns, uint64_t black_pawns);
+int evaluateKingSafety(const BitBoard &board);
 
 int Evaluation::evaluate(const BitBoard &board) {
     int phaseMaterial = 0;
@@ -63,6 +64,11 @@ int Evaluation::evaluate(const BitBoard &board) {
     // Pawn Structure
     score += evaluatePawnStructure(board.whitePawns, board.blackPawns);
 
+    // King Safety (only in middlegame)
+    if (!endgame) {
+        score += evaluateKingSafety(board);
+    }
+
     // Draw penalty
     int occurrences = 0;
 
@@ -74,12 +80,91 @@ int Evaluation::evaluate(const BitBoard &board) {
 
     // If this is the second time this position appears in the current search path,
     // apply a penalty. The search itself handles the 3rd occurrence as a draw (score 0).
-    if (occurrences == 2) {
-        int penalty = board.sideToMove == WHITE? -100 : 100;
+    if (occurrences >= 2) {
+        int penalty = board.sideToMove == WHITE? -100 : +100;
         score += penalty;
     }
     
     return (board.sideToMove == WHITE) ? score : -score;
+}
+
+int evaluateKingSafety(const BitBoard &board) {
+    int score = 0;
+    
+    // Evaluate white king safety
+    int whiteKingFile = board.whiteKingSquare & 7;
+    
+    // Pawn shield: check for pawns in front of king
+    int shieldBonus = 0;
+    for (int f = whiteKingFile - 1; f <= whiteKingFile + 1; ++f) {
+        if (f >= 0 && f < 8) {
+            uint64_t fileSquares = FILES[f] & board.getWhitePawns();
+            if (fileSquares) {
+                // Find closest pawn to king
+                int pawnSquare = __builtin_clzll(fileSquares | 1) ^ 63;
+                int pawnRank = pawnSquare / 8;
+                int kingRank = board.whiteKingSquare / 8;
+                
+                if (pawnRank > kingRank) { // Pawn is in front of king
+                    int distance = pawnRank - kingRank;
+                    if (distance == 1) shieldBonus += 20;      // Pawn right in front
+                    else if (distance == 2) shieldBonus += 10; // One square gap
+                }
+            } else {
+                shieldBonus -= 25; // Missing pawn in shield
+            }
+        }
+    }
+    score += shieldBonus;
+    
+    // Open files near king penalty
+    int openFilePenalty = 0;
+    for (int f = whiteKingFile - 1; f <= whiteKingFile + 1; ++f) {
+        if (f >= 0 && f < 8) {
+            uint64_t allPawnsOnFile = (board.getWhitePawns() | board.getBlackPawns()) & FILES[f];
+            if (!allPawnsOnFile) {
+                openFilePenalty += (f == whiteKingFile) ? 30 : 15; // King file more dangerous
+            }
+        }
+    }
+    score -= openFilePenalty;
+    
+    // Evaluate black king safety (same logic, mirrored)
+    int blackKingFile = board.blackKingSquare & 7;
+    
+    shieldBonus = 0;
+    for (int f = blackKingFile - 1; f <= blackKingFile + 1; ++f) {
+        if (f >= 0 && f < 8) {
+            uint64_t fileSquares = FILES[f] & board.getBlackPawns();
+            if (fileSquares) {
+                int pawnSquare = __builtin_ctzll(fileSquares);
+                int pawnRank = pawnSquare / 8;
+                int kingRank = board.blackKingSquare / 8;
+                
+                if (pawnRank < kingRank) { // Pawn is in front of black king
+                    int distance = kingRank - pawnRank;
+                    if (distance == 1) shieldBonus += 20;
+                    else if (distance == 2) shieldBonus += 10;
+                }
+            } else {
+                shieldBonus -= 25;
+            }
+        }
+    }
+    score -= shieldBonus; // Subtract because this is black's bonus
+    
+    openFilePenalty = 0;
+    for (int f = blackKingFile - 1; f <= blackKingFile + 1; ++f) {
+        if (f >= 0 && f < 8) {
+            uint64_t allPawnsOnFile = (board.getWhitePawns() | board.getBlackPawns()) & FILES[f];
+            if (!allPawnsOnFile) {
+                openFilePenalty += (f == blackKingFile) ? 30 : 15;
+            }
+        }
+    }
+    score += openFilePenalty; // Add because this hurts black
+    
+    return score;
 }
 
 int evaluatePawnStructure(uint64_t white_pawns, uint64_t black_pawns) {
@@ -133,13 +218,13 @@ int evaluatePawnStructure(uint64_t white_pawns, uint64_t black_pawns) {
     }
 
     // 3) Aggregate score (from White's perspective)
-    score += whitePassedCount * 30;
-    score -= whiteIsolatedCount * 20;
-    score -= whiteDoubledCount * 10;
+    score += whitePassedCount * 40;
+    score -= whiteIsolatedCount * 25;
+    score -= whiteDoubledCount * 15;
 
-    score -= blackPassedCount * 30;
-    score += blackIsolatedCount * 20;
-    score += blackDoubledCount * 10;
+    score -= blackPassedCount * 40;
+    score += blackIsolatedCount * 25;
+    score += blackDoubledCount * 15;
 
     return score;
 }

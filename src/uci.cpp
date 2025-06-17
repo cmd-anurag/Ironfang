@@ -184,7 +184,7 @@ void uciLoop() {
 
                 // Give extra time in the opening to prepare strategic advantage
                 if (pieceCount > 28) {
-                    timeForMove = static_cast<int>(timeForMove * 1.1);
+                    timeForMove = static_cast<int>(timeForMove * 1.3);
                 }
             }
             
