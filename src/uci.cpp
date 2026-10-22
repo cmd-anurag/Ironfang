@@ -16,6 +16,34 @@ std::string trim(const std::string& s) {
     return (start == std::string::npos) ? "" : s.substr(start, end - start + 1);
 }
 
+namespace {
+constexpr int MAX_GAME_REPETITION_HISTORY = 1024 - MAX_PLY - 1;
+
+void recordGamePosition(BitBoard& board, bool irreversible) {
+    // A pawn move or capture makes all earlier positions unreachable under
+    // legal play, so only retain positions since the latest irreversible move.
+    if (irreversible) board.pathDepth = 0;
+
+    // Leave room in the fixed board history array for the search variation.
+    if (board.pathDepth >= MAX_GAME_REPETITION_HISTORY) {
+        for (int i = 1; i < board.pathDepth; ++i)
+            board.repetitionPath[i - 1] = board.repetitionPath[i];
+        --board.pathDepth;
+    }
+    board.repetitionPath[board.pathDepth++] = board.zobristKey;
+}
+
+bool applyUciMoveAndRecord(BitBoard& board, const std::string& moveText) {
+    Move move = uciToMove(moveText, board);
+    if (move.from < 0 || !board.makeMove(move)) return false;
+
+    const bool irreversible = move.capture || move.isEnPassant ||
+                              move.piece == WP || move.piece == BP;
+    recordGamePosition(board, irreversible);
+    return true;
+}
+}
+
 
 void uciLoop() {
     srand(time(NULL));
@@ -100,8 +128,7 @@ void uciLoop() {
                 for (size_t i = lastUCIMoves.size();
                     i < currentUCIMoves.size(); ++i)
                 {
-                    Move m = uciToMove(currentUCIMoves[i], board);
-                    if (m.from >= 0) board.makeMove(m);
+                    applyUciMoveAndRecord(board, currentUCIMoves[i]);
                 }
             }
             else {
@@ -119,9 +146,13 @@ void uciLoop() {
                     }
                 }
 
+                // A FEN gives only the current position. For startpos, seed
+                // the initial position and then record each successfully
+                // replayed move so threefold checks include game history.
+                recordGamePosition(board, true);
+
                 for (const std::string &mv : currentUCIMoves) {
-                    Move m = uciToMove(mv, board);
-                    if (m.from >= 0) board.makeMove(m);
+                    applyUciMoveAndRecord(board, mv);
                 }
             }
 

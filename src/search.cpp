@@ -52,8 +52,17 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     if (moves.empty()) {
         return Move{NONE, -1, -1}; // No moves available
     }
-    board.pathDepth = 1;
-    board.repetitionPath[0] = board.zobristKey;
+    // Keep the game history supplied by the UCI layer. Direct callers may not
+    // have seeded it, so ensure the current root is present exactly once.
+    if (board.pathDepth == 0 ||
+        board.repetitionPath[board.pathDepth - 1] != board.zobristKey) {
+        if (board.pathDepth >= 1024 - MAX_PLY - 1) {
+            for (int i = 1; i < board.pathDepth; ++i)
+                board.repetitionPath[i - 1] = board.repetitionPath[i];
+            --board.pathDepth;
+        }
+        board.repetitionPath[board.pathDepth++] = board.zobristKey;
+    }
     
     // Set a default move immediately for safety
     bool hasLegalRootMove = false;
