@@ -30,9 +30,11 @@ int Evaluation::evaluate(const BitBoard &board) {
         }
     }
     bool endgame = phaseMaterial <= 1300;
+    uint64_t whitePieces = board.getWhitePieces();
+    uint64_t blackPieces = board.getBlackPieces();
+    uint64_t occupied = allPieces;
     
     // Evaluate white pieces
-    uint64_t whitePieces = board.getWhitePieces();
     while(whitePieces) {
         int square = board.popLSB(whitePieces);
         Piece p = board.getPiece(square);
@@ -47,7 +49,6 @@ int Evaluation::evaluate(const BitBoard &board) {
     }
     
     // Evaluate black pieces
-    uint64_t blackPieces = board.getBlackPieces();
     while(blackPieces) {
         int square = board.popLSB(blackPieces);
         Piece p = board.getPiece(square);
@@ -60,6 +61,54 @@ int Evaluation::evaluate(const BitBoard &board) {
             score -= pieceValue[basePiece] + PST[basePiece - 1][mirror(square)];
         }
     }
+
+    // Reward useful piece mobility while excluding friendly blockers.
+    uint64_t movers = board.getWhiteKnights();
+    while (movers) {
+        int square = board.popLSB(movers);
+        score += __builtin_popcountll(board.getKnightAttacks(square) & ~board.getWhitePieces()) * 4;
+    }
+    movers = board.getBlackKnights();
+    while (movers) {
+        int square = board.popLSB(movers);
+        score -= __builtin_popcountll(board.getKnightAttacks(square) & ~board.getBlackPieces()) * 4;
+    }
+    movers = board.getWhiteBishops();
+    while (movers) {
+        int square = board.popLSB(movers);
+        score += __builtin_popcountll(board.getBishopAttacks(square, occupied) & ~board.getWhitePieces()) * 3;
+    }
+    movers = board.getBlackBishops();
+    while (movers) {
+        int square = board.popLSB(movers);
+        score -= __builtin_popcountll(board.getBishopAttacks(square, occupied) & ~board.getBlackPieces()) * 3;
+    }
+    movers = board.getWhiteRooks();
+    while (movers) {
+        int square = board.popLSB(movers);
+        score += __builtin_popcountll(board.getRookAttacks(square, occupied) & ~board.getWhitePieces()) * 2;
+    }
+    movers = board.getBlackRooks();
+    while (movers) {
+        int square = board.popLSB(movers);
+        score -= __builtin_popcountll(board.getRookAttacks(square, occupied) & ~board.getBlackPieces()) * 2;
+    }
+
+    // A bishop pair is a long-term asset, and rooks belong on open files.
+    if (__builtin_popcountll(board.getWhiteBishops()) >= 2) score += 30;
+    if (__builtin_popcountll(board.getBlackBishops()) >= 2) score -= 30;
+    auto rookFileBonus = [&](uint64_t rooks, uint64_t ownPawns, uint64_t enemyPawns, int sign) {
+        uint64_t temp = rooks;
+        while (temp) {
+            int square = board.popLSB(temp);
+            uint64_t file = FILES[square & 7];
+            if (!(ownPawns & file)) score += sign * ((enemyPawns & file) ? 10 : 18);
+            if ((sign > 0 && square / 8 == 1) || (sign < 0 && square / 8 == 6))
+                score += sign * 16;
+        }
+    };
+    rookFileBonus(board.getWhiteRooks(), board.getWhitePawns(), board.getBlackPawns(), 1);
+    rookFileBonus(board.getBlackRooks(), board.getBlackPawns(), board.getWhitePawns(), -1);
 
     // Pawn Structure
     score += evaluatePawnStructure(board.whitePawns, board.blackPawns);
@@ -171,8 +220,8 @@ int evaluatePawnStructure(uint64_t white_pawns, uint64_t black_pawns) {
     int score = 0;
 
     // Counters for pawn features
-    int whiteIsolatedCount = 0, whiteDoubledCount = 0, whitePassedCount = 0;
-    int blackIsolatedCount = 0, blackDoubledCount = 0, blackPassedCount = 0;
+    int whiteIsolatedCount = 0, whiteDoubledCount = 0, whitePassedScore = 0;
+    int blackIsolatedCount = 0, blackDoubledCount = 0, blackPassedScore = 0;
 
     // 1) Doubled and Isolated pawns by file
     for (int file = 0; file < 8; ++file) {
@@ -201,7 +250,8 @@ int evaluatePawnStructure(uint64_t white_pawns, uint64_t black_pawns) {
         int file = square & 7;
         uint64_t span = SPAN_NORTH[square] & (FILES[file] | ADJACENT_FILES[file]);
         if ((black_pawns & span) == 0) {
-            whitePassedCount++;
+            int advancement = 6 - square / 8;
+            whitePassedScore += 30 + advancement * advancement * 5;
         }
     }
 
@@ -213,16 +263,17 @@ int evaluatePawnStructure(uint64_t white_pawns, uint64_t black_pawns) {
         int file = square & 7;
         uint64_t span = SPAN_SOUTH[square] & (FILES[file] | ADJACENT_FILES[file]);
         if ((white_pawns & span) == 0) {
-            blackPassedCount++;
+            int advancement = square / 8 - 1;
+            blackPassedScore += 30 + advancement * advancement * 5;
         }
     }
 
     // 3) Aggregate score (from White's perspective)
-    score += whitePassedCount * 40;
+    score += whitePassedScore;
     score -= whiteIsolatedCount * 25;
     score -= whiteDoubledCount * 15;
 
-    score -= blackPassedCount * 40;
+    score -= blackPassedScore;
     score += blackIsolatedCount * 25;
     score += blackDoubledCount * 15;
 

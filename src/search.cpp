@@ -8,6 +8,7 @@
 #include <array>
 #include <chrono>
 #include <assert.h>
+#include <cstdlib>
 
 std::vector<std::vector<Move>> killerMoves(MAX_DEPTH+1, std::vector<Move>(2, Move(NONE, -1, -1)));
 std::array<std::array<int, 64>, 64> historyHeuristics{};
@@ -15,9 +16,23 @@ TranspositionTable TT;
 
 uint64_t nodeCount = 0;
 
+static int scoreToTT(int score, int ply) {
+    if (score >= MATE_THRESHOLD) return score + ply;
+    if (score <= -MATE_THRESHOLD) return score - ply;
+    return score;
+}
+
+static int scoreFromTT(int score, int ply) {
+    if (score >= MATE_THRESHOLD) return score - ply;
+    if (score <= -MATE_THRESHOLD) return score + ply;
+    return score;
+}
+
 Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
+    maxDepth = std::max(1, std::min(maxDepth, MAX_DEPTH));
     // Reset counters
     nodeCount = 0;
+    historyHeuristics = {};
     TT.lookupCount = 0;
     TT.hitCount = 0;
     TT.keyMatchCount = 0;
@@ -31,7 +46,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     int timeForThinking = timeLimit;
     
     // Set a hard cutoff time slightly below the time limit (95%)
-    int hardTimeLimit = timeLimit > 0 ? static_cast<int>(timeLimit * 0.95) : -1;
+    int hardTimeLimit = timeLimit > 0 ? std::max(1, static_cast<int>(timeLimit * 0.95)) : -1;
     
     // Default move (will be overwritten soon)
     Move bestMove{NONE, -1, -1};
@@ -43,8 +58,11 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     if (moves.empty()) {
         return Move{NONE, -1, -1}; // No moves available
     }
+    board.pathDepth = 1;
+    board.repetitionPath[0] = board.zobristKey;
     
     // Set a default move immediately for safety
+    bool hasLegalRootMove = false;
     for (const Move& move : moves) {
         Gamestate prevdata = {
             board.sideToMove,
@@ -61,9 +79,11 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
         if (board.makeMove(move)) {
             board.unmakeMove(move, prevdata);
             bestMove = move; // Set default move in case we run out of time
+            hasLegalRootMove = true;
             break;
         }
     }
+    if (!hasLegalRootMove) return Move{NONE, -1, -1};
     
     // ------------------------------------------------------------------------------------
     //                          ITERATIVE DEEPENING SEARCH
@@ -139,7 +159,6 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
             if (!board.makeMove(move)) {
                 continue;
             }
-            board.pathDepth = 0;
             // Normal search with full alpha-beta window
             int score = -minimaxAlphaBeta(board, depth - 1, -beta, -alpha, 0);
             
@@ -185,9 +204,15 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
         }
 
         // Output information
-        std::cout << "info depth " << depth 
-                  << " score cp " << bestScore
-                  << " nodes " << nodeCount << " hashfull " << hashFull
+        std::cout << "info depth " << depth << " score ";
+        if (bestScore >= MATE_THRESHOLD || bestScore <= -MATE_THRESHOLD) {
+            int pliesToMate = INF - std::abs(bestScore);
+            int mateMoves = (pliesToMate + 1) / 2;
+            std::cout << "mate " << (bestScore > 0 ? mateMoves : -mateMoves);
+        } else {
+            std::cout << "cp " << bestScore;
+        }
+        std::cout << " nodes " << nodeCount << " hashfull " << hashFull
                   << " nps " << nps
                   << " pv " << moveToUCI(bestMove) << "\n" << std::flush;
 
@@ -212,6 +237,10 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
 int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, int ply) {
     ++nodeCount; // an efficiency metric
 
+    if (ply >= MAX_PLY - 1) {
+        return Evaluation::evaluate(board);
+    }
+
     board.repetitionPath[board.pathDepth++] = board.zobristKey;
     assert(board.pathDepth <= 1024);
 
@@ -229,7 +258,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
 
     if(TT.probe(board.zobristKey, depth, alpha, beta, tempEval, tempMove)) {
         --board.pathDepth;
-        return tempEval;
+        return scoreFromTT(tempEval, ply);
     }
 
     int kingSq = (board.sideToMove == WHITE) ? board.whiteKingSquare : board.blackKingSquare;
@@ -283,7 +312,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
 
         // prune on fail-high
         if (nullMoveScore >= beta) {
-            TT.store(board.zobristKey, depth, beta, TT_LOWER, Move(NONE, -1, -1));
+            TT.store(board.zobristKey, depth, scoreToTT(beta, ply), TT_LOWER, Move(NONE, -1, -1));
             --board.pathDepth;
             return beta;
         }
@@ -328,8 +357,10 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         }
         if(move.promotion) score += 5000;
 
-        if(move == killerMoves[depth][0]) score += 10000;
-        if(move == killerMoves[depth][1]) score += 9000;
+        if (depth <= MAX_DEPTH && move == killerMoves[depth][0]) score += 10000;
+        if (depth <= MAX_DEPTH && move == killerMoves[depth][1]) score += 9000;
+        if (!move.capture && move.piece != NONE)
+            score += historyHeuristics[move.from][move.to];
 
 
         move.heuristicScore = score;
@@ -370,7 +401,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         int score;
         
         // Late Move Reduction
-        bool isReducible = !inCheck && !move.capture &&
+        bool isReducible = !inCheck && !move.capture && !move.promotion &&
                     move != killerMoves[depth][0] &&
                     move != killerMoves[depth][1];
 
@@ -400,14 +431,14 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         if (score >= beta) {
         
             // record KILLER moves here (nice name)
-            if(!move.capture && !(move == killerMoves[depth][0])) {
+            if(!move.capture && depth <= MAX_DEPTH && !(move == killerMoves[depth][0])) {
                 killerMoves[depth][1] = killerMoves[depth][0];
                 killerMoves[depth][0] = move;
             }
 
 
             // record a lower bound entry in TT
-            TT.store(board.zobristKey,depth, beta, TT_LOWER, move);
+            TT.store(board.zobristKey,depth, scoreToTT(beta, ply), TT_LOWER, move);
 
             --board.pathDepth;
             return beta;
@@ -416,6 +447,10 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         if (score > alpha) {
             alpha = score;
             bestMove = move;
+            if (!move.capture && depth > 0 && depth <= MAX_DEPTH) {
+                int& history = historyHeuristics[move.from][move.to];
+                history = std::min(100000, history + depth * depth);
+            }
         }
     }
 
@@ -430,7 +465,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         ? -INF + ply  // checkmate
         : 0;             // stalemate
 
-        TT.store(board.zobristKey, depth, eval, TT_EXACT, Move(NONE, -1, -1));
+        TT.store(board.zobristKey, depth, scoreToTT(eval, ply), TT_EXACT, Move(NONE, -1, -1));
         --board.pathDepth;
         return eval;
     }
@@ -443,7 +478,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         flag = TT_EXACT;
     }
 
-    TT.store(board.zobristKey, depth, alpha, flag, bestMove);
+    TT.store(board.zobristKey, depth, scoreToTT(alpha, ply), flag, bestMove);
     --board.pathDepth;
     return alpha;
 }
@@ -451,35 +486,51 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
 int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, int ply) {
     ++nodeCount;
 
+    if (ply >= MAX_PLY - 1) return Evaluation::evaluate(board);
+
+    if (board.pathDepth < 1024) {
+        board.repetitionPath[board.pathDepth++] = board.zobristKey;
+        int occurrences = 0;
+        for (int i = 0; i < board.pathDepth; ++i) {
+            if (board.repetitionPath[i] == board.zobristKey && ++occurrences >= 3) {
+                --board.pathDepth;
+                return 0;
+            }
+        }
+    }
+
+    int kingSq = board.sideToMove == WHITE ? board.whiteKingSquare : board.blackKingSquare;
+    Color opponent = board.sideToMove == WHITE ? BLACK : WHITE;
+    bool inCheck = board.isSquareAttacked(kingSq, opponent);
+
     Move probeMove;
     int probeEval;
     if (TT.probe(board.zobristKey, -qdepth, alpha, beta, probeEval, probeMove)) {
-        return probeEval;
+        if (board.pathDepth > 0) --board.pathDepth;
+        return scoreFromTT(probeEval, ply);
     }
     
-    // 1. More aggressive depth limit
-    if (qdepth >= 6) { 
+    // A checked side must search legal evasions; stand-pat is not valid in check.
+    // Limit only non-checking capture sequences to prevent pathological extensions.
+    if (qdepth >= 12 && !inCheck) {
         int eval = Evaluation::evaluate(board);
-        TT.store(board.zobristKey, -qdepth, eval, TT_EXACT, Move(NONE, -1, -1));
+        TT.store(board.zobristKey, -qdepth, scoreToTT(eval, ply), TT_EXACT, Move(NONE, -1, -1));
+        if (board.pathDepth > 0) --board.pathDepth;
         return eval;
     }
-    
-    // 2. Stand pat evaluation
-    int standPat = Evaluation::evaluate(board);
-    
-    // Stand pat cutoff
-    if (standPat >= beta) {
-        // Store lower bound in TT
-        TT.store(board.zobristKey, -qdepth, beta, TT_LOWER, Move(NONE, -1, -1));
-        return beta;
+
+    int standPat = -INF;
+    if (!inCheck) {
+        standPat = Evaluation::evaluate(board);
+        if (standPat >= beta) {
+            TT.store(board.zobristKey, -qdepth, scoreToTT(beta, ply), TT_LOWER, Move(NONE, -1, -1));
+            if (board.pathDepth > 0) --board.pathDepth;
+            return beta;
+        }
+        if (standPat > alpha) alpha = standPat;
     }
-    
-    // Update alpha if stand pat is better
-    if (alpha < standPat)
-        alpha = standPat;
-    
-    // Generate capture moves
-    std::vector<Move> captures = board.generateCaptures();
+
+    std::vector<Move> captures = inCheck ? board.generateMoves() : board.generateCaptures();
 
 
     for(Move &move : captures) {
@@ -487,7 +538,8 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
             move.heuristicScore += 15000;
         }
         if(move.promotion) move.heuristicScore += 5000;
-        move.heuristicScore += 1000 + Evaluation::pieceValue[move.capture & 7] * 10 - Evaluation::pieceValue[move.piece & 7];
+        if (move.capture)
+            move.heuristicScore += 1000 + Evaluation::pieceValue[move.capture & 7] * 10 - Evaluation::pieceValue[move.piece & 7];
     }
     
     // 4. delta pruning
@@ -502,12 +554,8 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
     
     for (const Move& move : captures) {
         // Delta pruning - skip captures that can't improve alpha
-        if (standPat + Evaluation::pieceValue[move.capture & 7] + FUTILITY_MARGIN <= alpha) {
-            continue;
-        }
-        
-        // Skip obviously bad captures (losing material)
-        if (Evaluation::pieceValue[move.capture & 7] < Evaluation::pieceValue[move.piece & 7] - 100) {
+        if (!inCheck && move.capture && !move.promotion &&
+            standPat + Evaluation::pieceValue[move.capture & 7] + FUTILITY_MARGIN <= alpha) {
             continue;
         }
         
@@ -531,7 +579,8 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
         
         if (score >= beta) {
             // Store lower bound in TT
-            TT.store(board.zobristKey, -qdepth, beta, TT_LOWER, move);
+            TT.store(board.zobristKey, -qdepth, scoreToTT(beta, ply), TT_LOWER, move);
+            if (board.pathDepth > 0) --board.pathDepth;
             return beta;
         }
             
@@ -540,9 +589,16 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
             bestMove = move;
         }
     }
+
+    if (inCheck && bestMove.piece == NONE) {
+        // No legal evasion: checkmate.
+        if (board.pathDepth > 0) --board.pathDepth;
+        return -INF + ply;
+    }
     
     TT_FLAG finalFlag = (alpha > standPat) ? TT_EXACT : TT_UPPER;
-    TT.store(board.zobristKey, -qdepth, alpha, finalFlag, bestMove);
+    TT.store(board.zobristKey, -qdepth, scoreToTT(alpha, ply), finalFlag, bestMove);
+    if (board.pathDepth > 0) --board.pathDepth;
 
     return alpha;
 }
@@ -550,10 +606,10 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
 // Helper function to detect positions where null-move is unsafe
 bool Search::hasNonPawnMaterial(const BitBoard& board, Color side) {
     if (side == WHITE) {
-        return board.getWhiteKnights() || board.getWhiteBishops() || 
-               board.getWhiteRooks() || board.getWhiteQueens();
+        if (board.getWhiteRooks() || board.getWhiteQueens()) return true;
+        return __builtin_popcountll(board.getWhiteKnights() | board.getWhiteBishops()) >= 2;
     } else {
-        return board.getBlackKnights() || board.getBlackBishops() || 
-               board.getBlackRooks() || board.getBlackQueens();
+        if (board.getBlackRooks() || board.getBlackQueens()) return true;
+        return __builtin_popcountll(board.getBlackKnights() | board.getBlackBishops()) >= 2;
     }
 }

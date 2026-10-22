@@ -100,6 +100,8 @@ void BitBoard::setStartPosition() {
     blackPawns = 0x000000000000FF00ULL;    // rank 7
 
     sideToMove = WHITE;
+    enPassantSquare = -1;
+    pathDepth = 0;
     whiteKingsideCastle = true;
     whiteQueensideCastle = true;
     blackKingsideCastle = true;
@@ -221,6 +223,20 @@ std::vector<Move> BitBoard::generateCaptures() const
             case WP: case BP: {
                 // Pawn captures (including promotions and en passant)
                 int promotionRank = (color == WHITE) ? 0 : 7;
+                int forward = color == WHITE ? -8 : 8;
+                int forwardSquare = square + forward;
+                if (forwardSquare >= 0 && forwardSquare < 64 &&
+                    forwardSquare / 8 == promotionRank &&
+                    !(occupied & (1ULL << forwardSquare))) {
+                    Piece queen = color == WHITE ? WQ : BQ;
+                    Piece rook = color == WHITE ? WR : BR;
+                    Piece bishop = color == WHITE ? WB : BB;
+                    Piece knight = color == WHITE ? WN : BN;
+                    captures.push_back(Move(piece, square, forwardSquare, queen));
+                    captures.push_back(Move(piece, square, forwardSquare, rook));
+                    captures.push_back(Move(piece, square, forwardSquare, bishop));
+                    captures.push_back(Move(piece, square, forwardSquare, knight));
+                }
                 
                 // Regular pawn captures
                 uint64_t attacks = getPawnAttacks(square, color) & enemies;
@@ -457,7 +473,7 @@ void BitBoard::generateKingMoves(int square, std::vector<Move>& moves, Piece p, 
     // Castling moves
     if (color == WHITE) {
         // White kingside castling
-        if (whiteKingsideCastle && square == 60) {
+        if (whiteKingsideCastle && square == 60 && getPiece(63) == WR) {
             if (!(getAllPieces() & 0x6000000000000000ULL)) { // f1 and g1 empty
                 if (!isSquareAttacked(60, BLACK) && !isSquareAttacked(61, BLACK) && !isSquareAttacked(62, BLACK)) {
                     moves.push_back(Move(p, square, 62, 0, 0, true, false, false));
@@ -465,7 +481,7 @@ void BitBoard::generateKingMoves(int square, std::vector<Move>& moves, Piece p, 
             }
         }
         // White queenside castling
-        if (whiteQueensideCastle && square == 60) {
+        if (whiteQueensideCastle && square == 60 && getPiece(56) == WR) {
             if (!(getAllPieces() & 0x0E00000000000000ULL)) { // b1, c1, d1 empty
                 if (!isSquareAttacked(60, BLACK) && !isSquareAttacked(59, BLACK) && !isSquareAttacked(58, BLACK)) {
                     moves.push_back(Move(p, square, 58, 0, 0, false, true, false));
@@ -474,7 +490,7 @@ void BitBoard::generateKingMoves(int square, std::vector<Move>& moves, Piece p, 
         }
     } else {
         // Black kingside castling
-        if (blackKingsideCastle && square == 4) {
+        if (blackKingsideCastle && square == 4 && getPiece(7) == BR) {
             if (!(getAllPieces() & 0x0000000000000060ULL)) { // f8 and g8 empty
                 if (!isSquareAttacked(4, WHITE) && !isSquareAttacked(5, WHITE) && !isSquareAttacked(6, WHITE)) {
                     moves.push_back(Move(p, square, 6, 0, 0, true, false, false));
@@ -482,7 +498,7 @@ void BitBoard::generateKingMoves(int square, std::vector<Move>& moves, Piece p, 
             }
         }
         // Black queenside castling
-        if (blackQueensideCastle && square == 4) {
+        if (blackQueensideCastle && square == 4 && getPiece(0) == BR) {
             if (!(getAllPieces() & 0x000000000000000EULL)) { // b8, c8, d8 empty
                 if (!isSquareAttacked(4, WHITE) && !isSquareAttacked(3, WHITE) && !isSquareAttacked(2, WHITE)) {
                     moves.push_back(Move(p, square, 2, 0, 0, false, true, false));
@@ -781,75 +797,69 @@ void BitBoard::print() const {
 }
 
 bool BitBoard::setPositionFromFEN(const std::string& fen) {
-    // Clear all bitboards
-    whitePawns = blackPawns = 0;
-    whiteRooks = blackRooks = 0;
-    whiteBishops = blackBishops = 0;
-    whiteQueens = blackQueens = 0;
-    whiteKnights = blackKnights = 0;
-    whiteKing = blackKing = 0;
-    
+    BitBoard original = *this;
+    auto fail = [this, &original]() { *this = original; return false; };
     std::istringstream ss(fen);
-    std::string token;
-    
-    // 1. Piece placement
-    if (!(ss >> token)) return false;
-    
-    int square = 0;
-    for (char c : token) {
+    std::string placement, active, castling, ep;
+    if (!(ss >> placement >> active >> castling >> ep)) return fail();
+    if (active != "w" && active != "b") return fail();
+
+    whitePawns = blackPawns = whiteRooks = blackRooks = 0;
+    whiteBishops = blackBishops = whiteQueens = blackQueens = 0;
+    whiteKnights = blackKnights = whiteKing = blackKing = 0;
+    int rank = 0, file = 0, whiteKings = 0, blackKings = 0;
+    for (char c : placement) {
         if (c == '/') {
+            if (file != 8 || rank >= 7) return fail();
+            ++rank;
+            file = 0;
             continue;
-        } else if (isdigit(c)) {
-            square += (c - '0');
-        } else {
-            Piece p = NONE;
+        }
+        if (c >= '1' && c <= '8') {
+            file += c - '0';
+            if (file > 8) return fail();
+            continue;
+        }
+        Piece piece;
+        switch (c) {
+            case 'P': piece = WP; break; case 'N': piece = WN; break;
+            case 'B': piece = WB; break; case 'R': piece = WR; break;
+            case 'Q': piece = WQ; break; case 'K': piece = WK; break;
+            case 'p': piece = BP; break; case 'n': piece = BN; break;
+            case 'b': piece = BB; break; case 'r': piece = BR; break;
+            case 'q': piece = BQ; break; case 'k': piece = BK; break;
+            default: return fail();
+        }
+        if (file >= 8) return fail();
+        int square = rank * 8 + file++;
+        setPiece(piece, square);
+        if (piece == WK) { whiteKingSquare = square; ++whiteKings; }
+        if (piece == BK) { blackKingSquare = square; ++blackKings; }
+    }
+    if (rank != 7 || file != 8 || whiteKings != 1 || blackKings != 1) return fail();
+
+    sideToMove = active == "w" ? WHITE : BLACK;
+    whiteKingsideCastle = whiteQueensideCastle = false;
+    blackKingsideCastle = blackQueensideCastle = false;
+    if (castling != "-") {
+        for (char c : castling) {
             switch (c) {
-                case 'P': p = WP; break;
-                case 'N': p = WN; break;
-                case 'B': p = WB; break;
-                case 'R': p = WR; break;
-                case 'Q': p = WQ; break;
-                case 'K': p = WK; break;
-                case 'p': p = BP; break;
-                case 'n': p = BN; break;
-                case 'b': p = BB; break;
-                case 'r': p = BR; break;
-                case 'q': p = BQ; break;
-                case 'k': p = BK; break;
-                default: return false;
-            }
-            
-            if (p != NONE) {
-                setPiece(p, square);
-                
-                if (p == WK) whiteKingSquare = square;
-                if (p == BK) blackKingSquare = square;
-                
-                square++;
+                case 'K': if (whiteKingsideCastle) return fail(); whiteKingsideCastle = true; break;
+                case 'Q': if (whiteQueensideCastle) return fail(); whiteQueensideCastle = true; break;
+                case 'k': if (blackKingsideCastle) return fail(); blackKingsideCastle = true; break;
+                case 'q': if (blackQueensideCastle) return fail(); blackQueensideCastle = true; break;
+                default: return fail();
             }
         }
     }
-    
-    // 2. Active color
-    if (!(ss >> token)) return false;
-    sideToMove = (token == "w") ? WHITE : BLACK;
-    
-    // 3. Castling availability
-    if (!(ss >> token)) return false;
-    whiteKingsideCastle = (token.find('K') != std::string::npos);
-    whiteQueensideCastle = (token.find('Q') != std::string::npos);
-    blackKingsideCastle = (token.find('k') != std::string::npos);
-    blackQueensideCastle = (token.find('q') != std::string::npos);
-    
-    // 4. En passant target square
-    if (!(ss >> token)) return false;
-    if (token == "-") {
-        enPassantSquare = -1;
-    } else {
-        int file = token[0] - 'a';
-        int rank = 8 - (token[1] - '0');
-        enPassantSquare = rank * 8 + file;
+    enPassantSquare = -1;
+    if (ep != "-") {
+        if (ep.size() != 2 || ep[0] < 'a' || ep[0] > 'h' || ep[1] < '1' || ep[1] > '8') return fail();
+        int epRank = 8 - (ep[1] - '0');
+        if (epRank != 2 && epRank != 5) return fail();
+        enPassantSquare = epRank * 8 + ep[0] - 'a';
     }
-    
+    zobristKey = generateZobristHashKey(*this);
+    pathDepth = 0;
     return true;
 }

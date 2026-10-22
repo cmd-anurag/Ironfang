@@ -4,6 +4,7 @@
 #include <vector>
 #include <cstdlib> 
 #include <ctime>
+#include <algorithm>
 #include "board.h"
 #include "bitboard.h"
 #include "search.h"
@@ -46,27 +47,33 @@ void uciLoop() {
 
             std::string currentFEN;
             std::vector<std::string> currentUCIMoves;
+            bool movesAlreadyParsed = false;
 
             if(sub == "startpos") {
                 currentFEN = "startpos";
             }
             else if(sub == "fen") {
-                // FEN has 6 parts (piece placement, active color, castling,
-                // en passant, halfmove clock, fullmove counter)
-                std::string fenParts[6];
-                for(int i = 0; i < 6 && iss >> fenParts[i]; i++) {}
-                // Combine all parts into complete FEN
-                currentFEN = fenParts[0];
-                for(int i = 1; i < 6; i++) {
-                    if(!fenParts[i].empty()) {
-                        currentFEN += " " + fenParts[i];
+                // The first four FEN fields define the board state used here.
+                std::string placement, active, castling, ep;
+                if (!(iss >> placement >> active >> castling >> ep)) continue;
+                currentFEN = placement + " " + active + " " + castling + " " + ep;
+                std::string trailing;
+                int clockFields = 0;
+                while (iss >> trailing) {
+                    if (trailing == "moves") {
+                        movesAlreadyParsed = true;
+                        break;
                     }
+                    if (clockFields++ < 2) currentFEN += " " + trailing;
+                }
+                if (movesAlreadyParsed) {
+                    while (iss >> trailing) currentUCIMoves.push_back(trailing);
                 }
             }
 
             // Check for "moves" token
             std::string nextToken;
-            if(iss >> nextToken && nextToken == "moves") {
+            if(!movesAlreadyParsed && iss >> nextToken && nextToken == "moves") {
                 // Parse all moves
                 std::string moveStr;
                 while(iss >> moveStr) {
@@ -92,7 +99,7 @@ void uciLoop() {
                     i < currentUCIMoves.size(); ++i)
                 {
                     Move m = uciToMove(currentUCIMoves[i], board);
-                    board.makeMove(m);
+                    if (m.from >= 0) board.makeMove(m);
                 }
             }
             else {
@@ -101,12 +108,18 @@ void uciLoop() {
                     board.setStartPosition();
                 }
                 else { // sub == "fen"
-                    board.setPositionFromFEN(currentFEN);
+                    if (!board.setPositionFromFEN(currentFEN)) {
+                        std::cout << "info string invalid FEN position\n" << std::flush;
+                        board.setStartPosition();
+                        lastFEN.clear();
+                        lastUCIMoves.clear();
+                        continue;
+                    }
                 }
 
                 for (const std::string &mv : currentUCIMoves) {
                     Move m = uciToMove(mv, board);
-                    board.makeMove(m);
+                    if (m.from >= 0) board.makeMove(m);
                 }
             }
 
@@ -117,6 +130,7 @@ void uciLoop() {
 
         else if(token == "go") {
             int movetime = -1;
+            int requestedDepth = -1;
             int wtime = -1, btime = -1;
             int winc = 0, binc = 0;
             int movestogo = 30; // Default assumption
@@ -125,6 +139,9 @@ void uciLoop() {
             while (iss >> subtoken) {
                 if (subtoken == "movetime") {
                     iss >> movetime;
+                }
+                else if (subtoken == "depth") {
+                    iss >> requestedDepth;
                 }
                 else if (subtoken == "wtime") {
                     iss >> wtime;
@@ -179,6 +196,7 @@ void uciLoop() {
                 
                 // More aggressive safety margin - allow up to 25% of remaining time (was ~14%)
                 timeForMove = std::min(timeForMove, timeLeft / 4);
+                if (timeLeft > 0) timeForMove = std::max(1, timeForMove);
                 
                 
 
@@ -189,11 +207,13 @@ void uciLoop() {
             }
             
             // Set a dynamic maximum depth based on time
-            int maxDepth = MAX_DEPTH; // Very high base value - time will stop search before this
-            if (timeForMove > 0 && timeForMove < 100) {
-                maxDepth = 6; // For very fast time controls
-            } else if (timeForMove > 0 && timeForMove < 500) {
-                maxDepth = 8; // For bullet time controls
+            int maxDepth = requestedDepth > 0 ? std::min(requestedDepth, MAX_DEPTH) : MAX_DEPTH;
+            if (requestedDepth <= 0) {
+                if (timeForMove > 0 && timeForMove < 100) {
+                    maxDepth = 6;
+                } else if (timeForMove > 0 && timeForMove < 500) {
+                    maxDepth = 8;
+                }
             }
             
             // Log intentions
@@ -204,18 +224,11 @@ void uciLoop() {
                 
                 Move bestMove = Search::findBestMove(board, maxDepth, timeForMove);
                 
-                if (bestMove.from != -1) {
-                    std::cout << "bestmove " << moveToUCI(bestMove) << "\n" << std::flush;
-                }
-                else {
-                    std::cout << "info string Using a1a1 fallback\n" << std::flush;
-                    std::cout << "bestmove a1a1\n" << std::flush;
-                }
+                std::cout << "bestmove " << moveToUCI(bestMove) << "\n" << std::flush;
             }
             catch (...) {
-                // Emergency fallback
-                std::cout << "info string Using a1a1 fallback\n" << std::flush;
-                std::cout << "bestmove a1a1\n" << std::flush;
+                std::cout << "info string search failed\n" << std::flush;
+                std::cout << "bestmove 0000\n" << std::flush;
             }
         }
         else if (token == "quit") {
