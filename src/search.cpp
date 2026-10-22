@@ -22,12 +22,6 @@ static int scoreToTT(int score, int ply) {
     return score;
 }
 
-static int scoreFromTT(int score, int ply) {
-    if (score >= MATE_THRESHOLD) return score - ply;
-    if (score <= -MATE_THRESHOLD) return score + ply;
-    return score;
-}
-
 Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     maxDepth = std::max(1, std::min(maxDepth, MAX_DEPTH));
     // Reset counters
@@ -135,7 +129,6 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
             }
 
             if(move.promotion) move.heuristicScore += 4000;
-
         }
         std::sort(moves.begin(), moves.end(), [](const Move& m1, const Move& m2) {
             return m1.heuristicScore > m2.heuristicScore;
@@ -256,9 +249,9 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     Move tempMove = Move(NONE, -1, -1);
     int tempEval;
 
-    if(TT.probe(board.zobristKey, depth, alpha, beta, tempEval, tempMove)) {
+    if(TT.probe(board.zobristKey, depth, alpha, beta, ply, tempEval, tempMove)) {
         --board.pathDepth;
-        return scoreFromTT(tempEval, ply);
+        return tempEval;
     }
 
     int kingSq = (board.sideToMove == WHITE) ? board.whiteKingSquare : board.blackKingSquare;
@@ -505,10 +498,12 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
 
     Move probeMove;
     int probeEval;
-    if (TT.probe(board.zobristKey, -qdepth, alpha, beta, probeEval, probeMove)) {
+    if (TT.probe(board.zobristKey, -qdepth, alpha, beta, ply, probeEval, probeMove)) {
         if (board.pathDepth > 0) --board.pathDepth;
-        return scoreFromTT(probeEval, ply);
+        return probeEval;
     }
+
+    const int originalAlpha = alpha;
     
     // A checked side must search legal evasions; stand-pat is not valid in check.
     // Limit only non-checking capture sequences to prevent pathological extensions.
@@ -555,6 +550,7 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
     });
     
     Move bestMove(NONE, -1, -1);
+    bool foundLegalMove = false;
     
     for (const Move& move : captures) {
         // Delta pruning - skip captures that can't improve alpha
@@ -577,6 +573,7 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
         
         if (!board.makeMove(move))
             continue;
+        foundLegalMove = true;
 
         Color mover = board.sideToMove == WHITE ? BLACK : WHITE;
         int defendingKing = board.sideToMove == WHITE ? board.whiteKingSquare : board.blackKingSquare;
@@ -602,13 +599,16 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
         }
     }
 
-    if (inCheck && bestMove.piece == NONE) {
+    if (inCheck && !foundLegalMove) {
         // No legal evasion: checkmate.
         if (board.pathDepth > 0) --board.pathDepth;
         return -INF + ply;
     }
     
-    TT_FLAG finalFlag = (alpha > standPat) ? TT_EXACT : TT_UPPER;
+    // Fail-low results are upper bounds, including check evasions whose scores
+    // never raise alpha. Comparing against standPat incorrectly marked those
+    // fail-lows exact because standPat is -INF while in check.
+    TT_FLAG finalFlag = (alpha > originalAlpha) ? TT_EXACT : TT_UPPER;
     TT.store(board.zobristKey, -qdepth, scoreToTT(alpha, ply), finalFlag, bestMove);
     if (board.pathDepth > 0) --board.pathDepth;
 

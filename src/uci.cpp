@@ -40,6 +40,8 @@ void uciLoop() {
         }
         else if(token == "ucinewgame") {
             board.setStartPosition();
+            lastFEN.clear();
+            lastUCIMoves.clear();
         }
         else if (token == "position") {
             std::string sub;

@@ -142,7 +142,10 @@ uint64_t BitBoard::getPawnAttacks(int square, Color color) const {
 }
 
 bool BitBoard::isSquareAttacked(int square, Color opponentColor) const {
-    uint64_t occupied = getAllPieces();
+    return isSquareAttacked(square, opponentColor, getAllPieces());
+}
+
+bool BitBoard::isSquareAttacked(int square, Color opponentColor, uint64_t occupied) const {
     
     // Check pawn attacks
     uint64_t opponentPawns = (opponentColor == WHITE) ? whitePawns : blackPawns;
@@ -475,7 +478,10 @@ void BitBoard::generateKingMoves(int square, std::vector<Move>& moves, Piece p, 
         // White kingside castling
         if (whiteKingsideCastle && square == 60 && getPiece(63) == WR) {
             if (!(getAllPieces() & 0x6000000000000000ULL)) { // f1 and g1 empty
-                if (!isSquareAttacked(60, BLACK) && !isSquareAttacked(61, BLACK) && !isSquareAttacked(62, BLACK)) {
+                uint64_t occupancyWithoutKing = getAllPieces() & ~(1ULL << square);
+                if (!isSquareAttacked(60, BLACK, occupancyWithoutKing) &&
+                    !isSquareAttacked(61, BLACK, occupancyWithoutKing) &&
+                    !isSquareAttacked(62, BLACK, occupancyWithoutKing)) {
                     moves.push_back(Move(p, square, 62, 0, 0, true, false, false));
                 }
             }
@@ -483,7 +489,10 @@ void BitBoard::generateKingMoves(int square, std::vector<Move>& moves, Piece p, 
         // White queenside castling
         if (whiteQueensideCastle && square == 60 && getPiece(56) == WR) {
             if (!(getAllPieces() & 0x0E00000000000000ULL)) { // b1, c1, d1 empty
-                if (!isSquareAttacked(60, BLACK) && !isSquareAttacked(59, BLACK) && !isSquareAttacked(58, BLACK)) {
+                uint64_t occupancyWithoutKing = getAllPieces() & ~(1ULL << square);
+                if (!isSquareAttacked(60, BLACK, occupancyWithoutKing) &&
+                    !isSquareAttacked(59, BLACK, occupancyWithoutKing) &&
+                    !isSquareAttacked(58, BLACK, occupancyWithoutKing)) {
                     moves.push_back(Move(p, square, 58, 0, 0, false, true, false));
                 }
             }
@@ -492,7 +501,10 @@ void BitBoard::generateKingMoves(int square, std::vector<Move>& moves, Piece p, 
         // Black kingside castling
         if (blackKingsideCastle && square == 4 && getPiece(7) == BR) {
             if (!(getAllPieces() & 0x0000000000000060ULL)) { // f8 and g8 empty
-                if (!isSquareAttacked(4, WHITE) && !isSquareAttacked(5, WHITE) && !isSquareAttacked(6, WHITE)) {
+                uint64_t occupancyWithoutKing = getAllPieces() & ~(1ULL << square);
+                if (!isSquareAttacked(4, WHITE, occupancyWithoutKing) &&
+                    !isSquareAttacked(5, WHITE, occupancyWithoutKing) &&
+                    !isSquareAttacked(6, WHITE, occupancyWithoutKing)) {
                     moves.push_back(Move(p, square, 6, 0, 0, true, false, false));
                 }
             }
@@ -500,7 +512,10 @@ void BitBoard::generateKingMoves(int square, std::vector<Move>& moves, Piece p, 
         // Black queenside castling
         if (blackQueensideCastle && square == 4 && getPiece(0) == BR) {
             if (!(getAllPieces() & 0x000000000000000EULL)) { // b8, c8, d8 empty
-                if (!isSquareAttacked(4, WHITE) && !isSquareAttacked(3, WHITE) && !isSquareAttacked(2, WHITE)) {
+                uint64_t occupancyWithoutKing = getAllPieces() & ~(1ULL << square);
+                if (!isSquareAttacked(4, WHITE, occupancyWithoutKing) &&
+                    !isSquareAttacked(3, WHITE, occupancyWithoutKing) &&
+                    !isSquareAttacked(2, WHITE, occupancyWithoutKing)) {
                     moves.push_back(Move(p, square, 2, 0, 0, false, true, false));
                 }
             }

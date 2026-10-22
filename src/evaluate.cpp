@@ -253,7 +253,8 @@ int evaluatePawnStructure(uint64_t white_pawns, uint64_t black_pawns) {
         int square = __builtin_ctzll(tempPawns);
         tempPawns &= tempPawns - 1;
         int file = square & 7;
-        uint64_t span = SPAN_NORTH[square] & (FILES[file] | ADJACENT_FILES[file]);
+        // White advances toward decreasing square indices in this board map.
+        uint64_t span = SPAN_SOUTH[square] & (FILES[file] | ADJACENT_FILES[file]);
         if ((black_pawns & span) == 0) {
             int advancement = 6 - square / 8;
             whitePassedScore += 30 + advancement * advancement * 5;
@@ -266,7 +267,8 @@ int evaluatePawnStructure(uint64_t white_pawns, uint64_t black_pawns) {
         int square = __builtin_ctzll(tempPawns);
         tempPawns &= tempPawns - 1;
         int file = square & 7;
-        uint64_t span = SPAN_SOUTH[square] & (FILES[file] | ADJACENT_FILES[file]);
+        // Black advances toward increasing square indices in this board map.
+        uint64_t span = SPAN_NORTH[square] & (FILES[file] | ADJACENT_FILES[file]);
         if ((white_pawns & span) == 0) {
             int advancement = square / 8 - 1;
             blackPassedScore += 30 + advancement * advancement * 5;

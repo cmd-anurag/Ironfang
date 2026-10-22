@@ -30,6 +30,7 @@ class TranspositionTable {
             int depth,
             int alpha,
             int beta,
+            int ply,
             int &outEval,
             Move &outMove
         );
@@ -58,4 +59,3 @@ class TranspositionTable {
     private:
         TTEntry table[TT_SIZE];
 };
-    

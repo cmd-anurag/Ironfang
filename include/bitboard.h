@@ -69,6 +69,7 @@ class BitBoard {
         std::vector<Move> generateCaptures() const;
         
         bool isSquareAttacked(int square, Color opponentColor) const;
+        bool isSquareAttacked(int square, Color opponentColor, uint64_t occupied) const;
 
         bool makeMove(const Move &move);
         void unmakeMove(const Move &move, const Gamestate &prevState);
