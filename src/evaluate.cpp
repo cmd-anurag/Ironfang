@@ -1,7 +1,7 @@
 #include "evaluate.h"
 #include "bitboard.h"
 #include "precomputedEvalTables.h"
-#include <unordered_map>
+#include <algorithm>
 
 
 const int *PST[7] = {pawnPST, knightPST, bishopPST, rookPST, queenPST, kingMdPST, kingEgPST};
@@ -66,32 +66,32 @@ int Evaluation::evaluate(const BitBoard &board) {
     uint64_t movers = board.getWhiteKnights();
     while (movers) {
         int square = board.popLSB(movers);
-        score += __builtin_popcountll(board.getKnightAttacks(square) & ~board.getWhitePieces()) * 4;
+        score += std::min(8, __builtin_popcountll(board.getKnightAttacks(square) & ~board.getWhitePieces())) * 2;
     }
     movers = board.getBlackKnights();
     while (movers) {
         int square = board.popLSB(movers);
-        score -= __builtin_popcountll(board.getKnightAttacks(square) & ~board.getBlackPieces()) * 4;
+        score -= std::min(8, __builtin_popcountll(board.getKnightAttacks(square) & ~board.getBlackPieces())) * 2;
     }
     movers = board.getWhiteBishops();
     while (movers) {
         int square = board.popLSB(movers);
-        score += __builtin_popcountll(board.getBishopAttacks(square, occupied) & ~board.getWhitePieces()) * 3;
+        score += std::min(13, __builtin_popcountll(board.getBishopAttacks(square, occupied) & ~board.getWhitePieces())) * 2;
     }
     movers = board.getBlackBishops();
     while (movers) {
         int square = board.popLSB(movers);
-        score -= __builtin_popcountll(board.getBishopAttacks(square, occupied) & ~board.getBlackPieces()) * 3;
+        score -= std::min(13, __builtin_popcountll(board.getBishopAttacks(square, occupied) & ~board.getBlackPieces())) * 2;
     }
     movers = board.getWhiteRooks();
     while (movers) {
         int square = board.popLSB(movers);
-        score += __builtin_popcountll(board.getRookAttacks(square, occupied) & ~board.getWhitePieces()) * 2;
+        score += std::min(14, __builtin_popcountll(board.getRookAttacks(square, occupied) & ~board.getWhitePieces()));
     }
     movers = board.getBlackRooks();
     while (movers) {
         int square = board.popLSB(movers);
-        score -= __builtin_popcountll(board.getRookAttacks(square, occupied) & ~board.getBlackPieces()) * 2;
+        score -= std::min(14, __builtin_popcountll(board.getRookAttacks(square, occupied) & ~board.getBlackPieces()));
     }
 
     // A bishop pair is a long-term asset, and rooks belong on open files.
@@ -139,9 +139,16 @@ int Evaluation::evaluate(const BitBoard &board) {
 
 int evaluateKingSafety(const BitBoard &board) {
     int score = 0;
+
+    // Reward a king that has reached a protected castled position in the middlegame.
+    int whiteKingFile = board.whiteKingSquare & 7;
+    if (board.whiteKingSquare / 8 == 7 && (whiteKingFile == 2 || whiteKingFile == 6))
+        score += 25;
+    int blackKingFile = board.blackKingSquare & 7;
+    if (board.blackKingSquare / 8 == 0 && (blackKingFile == 2 || blackKingFile == 6))
+        score -= 25;
     
     // Evaluate white king safety
-    int whiteKingFile = board.whiteKingSquare & 7;
     
     // Pawn shield: check for pawns in front of king
     int shieldBonus = 0;
@@ -154,8 +161,8 @@ int evaluateKingSafety(const BitBoard &board) {
                 int pawnRank = pawnSquare / 8;
                 int kingRank = board.whiteKingSquare / 8;
                 
-                if (pawnRank > kingRank) { // Pawn is in front of king
-                    int distance = pawnRank - kingRank;
+                if (pawnRank < kingRank) { // White pawns advance toward lower row indices
+                    int distance = kingRank - pawnRank;
                     if (distance == 1) shieldBonus += 20;      // Pawn right in front
                     else if (distance == 2) shieldBonus += 10; // One square gap
                 }
@@ -179,8 +186,6 @@ int evaluateKingSafety(const BitBoard &board) {
     score -= openFilePenalty;
     
     // Evaluate black king safety (same logic, mirrored)
-    int blackKingFile = board.blackKingSquare & 7;
-    
     shieldBonus = 0;
     for (int f = blackKingFile - 1; f <= blackKingFile + 1; ++f) {
         if (f >= 0 && f < 8) {
@@ -190,8 +195,8 @@ int evaluateKingSafety(const BitBoard &board) {
                 int pawnRank = pawnSquare / 8;
                 int kingRank = board.blackKingSquare / 8;
                 
-                if (pawnRank < kingRank) { // Pawn is in front of black king
-                    int distance = kingRank - pawnRank;
+                if (pawnRank > kingRank) { // Black pawns advance toward higher row indices
+                    int distance = pawnRank - kingRank;
                     if (distance == 1) shieldBonus += 20;
                     else if (distance == 2) shieldBonus += 10;
                 }

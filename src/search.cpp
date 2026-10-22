@@ -530,7 +530,11 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
         if (standPat > alpha) alpha = standPat;
     }
 
-    std::vector<Move> captures = inCheck ? board.generateMoves() : board.generateCaptures();
+    // Search a small number of quiet checks too. Captures alone can miss forcing
+    // checking sequences and mating attacks at the horizon.
+    std::vector<Move> captures = (inCheck || qdepth < 2)
+        ? board.generateMoves()
+        : board.generateCaptures();
 
 
     for(Move &move : captures) {
@@ -573,6 +577,14 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
         
         if (!board.makeMove(move))
             continue;
+
+        Color mover = board.sideToMove == WHITE ? BLACK : WHITE;
+        int defendingKing = board.sideToMove == WHITE ? board.whiteKingSquare : board.blackKingSquare;
+        bool givesCheck = board.isSquareAttacked(defendingKing, mover);
+        if (!inCheck && !move.capture && !move.promotion && !(qdepth < 2 && givesCheck)) {
+            board.unmakeMove(move, prevdata);
+            continue;
+        }
             
         int score = -quiescenceSearch(board, -beta, -alpha, qdepth + 1, ply+1);
         board.unmakeMove(move, prevdata);
