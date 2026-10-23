@@ -4,8 +4,6 @@
 
 namespace {
 constexpr uint16_t INVALID_PACKED_MOVE = 0xFFFF;
-constexpr uint8_t TT_FLAG_MASK = 0x03;
-constexpr int TT_AGE_MASK = 0x3F;
 
 uint16_t packMove(const Move &move)
 {
@@ -29,20 +27,9 @@ Move unpackMove(uint16_t packedMove)
     return Move(NONE, from, to, promotionType);
 }
 
-uint8_t packMetadata(TT_FLAG flag, int age)
-{
-    return static_cast<uint8_t>(((age & TT_AGE_MASK) << 2) |
-                                (static_cast<uint8_t>(flag) & TT_FLAG_MASK));
-}
-
-int storedAge(const TTEntry &entry)
-{
-    return entry.metadata >> 2;
-}
-
 TT_FLAG storedFlag(const TTEntry &entry)
 {
-    return static_cast<TT_FLAG>(entry.metadata & TT_FLAG_MASK);
+    return static_cast<TT_FLAG>(entry.flag);
 }
 }
 
@@ -50,8 +37,6 @@ TranspositionTable::TranspositionTable()
 {
     for (size_t i = 0; i < TT_SIZE; ++i)
     table[i] = TTEntry{};
-    // setting all keys to zero indicating empty
-    currentAge = 0;
 }
 
 bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int beta,
@@ -62,11 +47,13 @@ bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int be
     size_t index = zobristKey & TT_MASK;
     TTEntry &entry = table[index];
 
-    // ABSOLUTELY DONT MESS AROUND HERE
+    // Match the reference's hash-move hint behavior: move ordering may use
+    // the indexed move even when the stored key collided with this position.
+    if (entry.key != 0)
+        outMove = unpackMove(entry.packedMove);
+
     if (entry.key == zobristKey) {
         ++keyMatchCount;
-        // Always extract the move if it's the correct position
-        outMove = unpackMove(entry.packedMove);
 
         // Check if stored depth is enough
         if (allowCutoff && entry.depth >= depth) {
@@ -112,48 +99,19 @@ void TranspositionTable::store(uint64_t zobristKey, int depth, int eval,
     size_t index = zobristKey & TT_MASK;
     TTEntry &entry = table[index];
 
-    bool isOverwrite = (entry.key != 0 && entry.key != zobristKey);
+    // The reference replaces the indexed entry on every store. Its TT is
+    // direct-mapped and has no depth/age replacement preference.
+    if (entry.key == 0)
+        ++entriesOccupied;
+    else if (entry.key != zobristKey)
+        ++overwritten;
 
-    // Prevent quiescence (depth<0) from wiping out real searches
-    if (depth < 0 && entry.depth > 0 && entry.key != zobristKey)
-        return;
-
-    // --- start replacement-policy patch ---
-    bool shouldReplace = false;
-
-    if (entry.key == 0) {
-        // Empty slot
-        shouldReplace = true;
-    }
-    else if (entry.key == zobristKey) {
-        // Same position: always allow updates for deeper or better moves
-        shouldReplace = (depth >= entry.depth);
-    }
-    else {
-        // Different key: compare old vs new “priority score”
-        int ageDiff = (currentAge - storedAge(entry) + 64) & TT_AGE_MASK;
-        int oldScore = entry.depth - ageDiff;
-        int newScore = depth;  // fresh entry has no age penalty
-
-        shouldReplace = (newScore >= oldScore);
-    }
-    // --- end replacement-policy patch ---
-
-    if (shouldReplace) {
-        if (entry.key == 0)       ++entriesOccupied;
-        else if (isOverwrite)     ++overwritten;
-
-        entry.key      = zobristKey;
-        entry.depth    = static_cast<uint8_t>(std::clamp(depth, 0, 255));
-        entry.eval     = eval;
-        entry.packedMove = packMove(bestMove);
-        entry.metadata = packMetadata(flag, currentAge);
-        ++actualStores;
-    }
-    else if (entry.key == zobristKey && bestMove.piece != NONE) {
-        // still update the move if it’s a better move for same position
-        entry.packedMove = packMove(bestMove);
-    }
+    entry.key = zobristKey;
+    entry.depth = static_cast<uint8_t>(std::clamp(depth, 0, 255));
+    entry.eval = eval;
+    entry.packedMove = packMove(bestMove);
+    entry.flag = static_cast<uint8_t>(flag);
+    ++actualStores;
 }
 
 

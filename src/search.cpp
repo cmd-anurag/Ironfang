@@ -279,7 +279,6 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     TT.totalStoreAttempts = 0;
     TT.actualStores = 0;
     TT.overwritten = 0;
-    TT.currentAge = (TT.currentAge + 1) & 0x3F;
     
     // Start timing
     auto startTime = std::chrono::steady_clock::now();

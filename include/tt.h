@@ -14,8 +14,7 @@ struct TTEntry {
     int eval;
     uint16_t packedMove;
     uint8_t depth;
-    // Two low bits hold TT_FLAG; the upper six bits hold the replacement age.
-    uint8_t metadata;
+    uint8_t flag;
 };
 
 static_assert(sizeof(TTEntry) == 16, "TT entries should stay compact");
@@ -51,15 +50,13 @@ class TranspositionTable {
         );
 
         void clear();
-        uint64_t lookupCount = 0;      // all TT probes, including quiescence probes
+        uint64_t lookupCount = 0;      // all TT probes in the main search
         uint64_t hitCount = 0;         // probes that returned a usable alpha-beta bound
         uint64_t keyMatchCount = 0;    // probes whose indexed entry matched the full key
         size_t totalStoreAttempts = 0;
         size_t actualStores = 0;
         size_t overwritten = 0;
         size_t entriesOccupied = 0;
-        int currentAge;
-
         size_t countOccupied() const;
         int hashfull() const;
 
