@@ -331,11 +331,14 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     board.repetitionPath[board.pathDepth++] = board.zobristKey;
     assert(board.pathDepth <= 1024);
 
-    int rep = 0;
+    int repetitionOccurrences = 0;
     for (int i = 0; i < board.pathDepth; ++i) {
-        if (board.repetitionPath[i] == board.zobristKey && ++rep >= 3) {
-            --board.pathDepth;
-            return 0;
+        if (board.repetitionPath[i] == board.zobristKey) {
+            ++repetitionOccurrences;
+            if (repetitionOccurrences >= 3) {
+                --board.pathDepth;
+                return 0;
+            }
         }
     }
 
@@ -343,7 +346,10 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     Move tempMove = Move(NONE, -1, -1);
     int tempEval;
 
-    if(TT.probe(board.zobristKey, depth, alpha, beta, ply, tempEval, tempMove)) {
+    // A cached score can depend on a different repetition history. Keep the
+    // TT move for ordering, but search this node when it has occurred before.
+    if (TT.probe(board.zobristKey, depth, alpha, beta, ply, tempEval, tempMove,
+                 repetitionOccurrences == 1)) {
         --board.pathDepth;
         return tempEval;
     }
@@ -599,13 +605,16 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
 
     if (ply >= MAX_PLY - 1) return Evaluation::evaluate(board);
 
+    int repetitionOccurrences = 0;
     if (board.pathDepth < 1024) {
         board.repetitionPath[board.pathDepth++] = board.zobristKey;
-        int occurrences = 0;
         for (int i = 0; i < board.pathDepth; ++i) {
-            if (board.repetitionPath[i] == board.zobristKey && ++occurrences >= 3) {
-                --board.pathDepth;
-                return 0;
+            if (board.repetitionPath[i] == board.zobristKey) {
+                ++repetitionOccurrences;
+                if (repetitionOccurrences >= 3) {
+                    --board.pathDepth;
+                    return 0;
+                }
             }
         }
     }
@@ -616,7 +625,10 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
 
     Move probeMove;
     int probeEval;
-    if (TT.probe(board.zobristKey, -qdepth, alpha, beta, ply, probeEval, probeMove)) {
+    // Quiescence scores can also depend on whether this position already
+    // appeared in the game or the current search line.
+    if (TT.probe(board.zobristKey, -qdepth, alpha, beta, ply,
+                 probeEval, probeMove, repetitionOccurrences == 1)) {
         if (board.pathDepth > 0) --board.pathDepth;
         return probeEval;
     }

@@ -10,7 +10,8 @@ TranspositionTable::TranspositionTable()
     currentAge = 0;
 }
 
-bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int beta, int ply, int &outEval, Move &outMove)
+bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int beta,
+                               int ply, int &outEval, Move &outMove, bool allowCutoff)
 {
     ++lookupCount;
 
@@ -24,7 +25,7 @@ bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int be
         outMove = entry.bestMove;
 
         // Check if stored depth is enough
-        if (entry.depth >= depth) {
+        if (allowCutoff && entry.depth >= depth) {
             // Mate scores are normalized when stored so their distance is
             // independent of the path that first reached this position.
             // Restore the current path's score before comparing alpha/beta.

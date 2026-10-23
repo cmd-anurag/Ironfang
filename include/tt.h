@@ -25,6 +25,7 @@ class TranspositionTable {
         TranspositionTable();
         ~TranspositionTable() = default;
 
+        // False keeps a matched hash move for ordering but suppresses score reuse.
         bool probe(
             uint64_t zobristKey,
             int depth,
@@ -32,7 +33,8 @@ class TranspositionTable {
             int beta,
             int ply,
             int &outEval,
-            Move &outMove
+            Move &outMove,
+            bool allowCutoff = true
         );
 
         void store(
