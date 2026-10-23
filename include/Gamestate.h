@@ -16,6 +16,7 @@ struct Gamestate {
     int whiteKingSquare;
     int blackKingSquare;
     uint64_t zobristKey;
+    int halfmoveClock;
 };
 
 #endif

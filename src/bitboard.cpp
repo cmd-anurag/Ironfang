@@ -101,6 +101,7 @@ void BitBoard::setStartPosition() {
 
     sideToMove = WHITE;
     enPassantSquare = -1;
+    halfmoveClock = 0;
     pathDepth = 0;
     whiteKingsideCastle = true;
     whiteQueensideCastle = true;
@@ -544,7 +545,8 @@ bool BitBoard::makeMove(const Move &move) {
         blackQueensideCastle,
         whiteKingSquare,
         blackKingSquare,
-        zobristKey
+        zobristKey,
+        halfmoveClock
     };
 
     if(enPassantSquare != -1) {
@@ -725,6 +727,12 @@ bool BitBoard::makeMove(const Move &move) {
         }
     } 
 
+    if (move.piece == WP || move.piece == BP || move.capture || move.isEnPassant) {
+        halfmoveClock = 0;
+    } else {
+        ++halfmoveClock;
+    }
+
     return true;
 }
 
@@ -736,6 +744,7 @@ void BitBoard::unmakeMove(const Move &move, const Gamestate &prevState) {
     whiteKingSquare = prevState.whiteKingSquare;
     blackKingSquare = prevState.blackKingSquare;
     enPassantSquare = prevState.enPassantSquare;
+    halfmoveClock = prevState.halfmoveClock;
     sideToMove = (sideToMove == WHITE) ? BLACK : WHITE;
 
     if (move.isKingSideCastle) {
@@ -801,7 +810,8 @@ bool BitBoard::tryMove(const Move& move) {
         blackQueensideCastle,
         whiteKingSquare,
         blackKingSquare,
-        zobristKey
+        zobristKey,
+        halfmoveClock
     };
 
     if(!makeMove(move)) return false;
@@ -884,6 +894,21 @@ bool BitBoard::setPositionFromFEN(const std::string& fen) {
         int epRank = 8 - (ep[1] - '0');
         if (epRank != 2 && epRank != 5) return fail();
         enPassantSquare = epRank * 8 + ep[0] - 'a';
+    }
+    halfmoveClock = 0;
+    std::string halfmoveToken;
+    if (ss >> halfmoveToken) {
+        size_t parsedLength = 0;
+        int parsedHalfmoveClock = 0;
+        try {
+            parsedHalfmoveClock = std::stoi(halfmoveToken, &parsedLength);
+        } catch (...) {
+            return fail();
+        }
+        if (parsedLength != halfmoveToken.size() || parsedHalfmoveClock < 0) {
+            return fail();
+        }
+        halfmoveClock = parsedHalfmoveClock;
     }
     zobristKey = generateZobristHashKey(*this);
     pathDepth = 0;

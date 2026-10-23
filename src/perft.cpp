@@ -16,7 +16,8 @@ uint64_t perft(BitBoard& board, int depth) {
             board.blackQueensideCastle,
             board.whiteKingSquare,
             board.blackKingSquare,
-            board.zobristKey
+            board.zobristKey,
+            board.halfmoveClock
         };
 
         if(!board.makeMove(move)) continue;

@@ -22,6 +22,7 @@ int selectiveDepth = 0;
 
 namespace {
 constexpr uint64_t TIME_CHECK_NODE_INTERVAL = 1024;
+constexpr uint64_t HALF_MOVE_TT_SALT = 0x9e3779b97f4a7c15ULL;
 std::array<std::array<Move, MAX_PLY>, MAX_PLY> pvTable{};
 std::array<int, MAX_PLY> pvLength{};
 std::array<std::vector<Move>, MAX_PLY> searchMoveBuffers;
@@ -57,6 +58,85 @@ bool checkSearchDeadline(bool force = false) {
         searchStoppedByTime = true;
     }
     return searchStoppedByTime;
+}
+
+uint64_t transpositionKey(const BitBoard& board) {
+    // Keep repetition identity based on board.zobristKey, while separating TT
+    // scores whose validity depends on the fifty-move counter.
+    return board.zobristKey ^ (static_cast<uint64_t>(board.halfmoveClock) * HALF_MOVE_TT_SALT);
+}
+
+bool hasFiftyMoveClaimByIntendedQuietMove(BitBoard& board) {
+    if (board.halfmoveClock != 99) {
+        return false;
+    }
+
+    std::vector<Move> moves = board.generateMoves();
+    for (const Move& move : moves) {
+        if (move.piece == WP || move.piece == BP || move.capture || move.isEnPassant) {
+            continue;
+        }
+
+        Gamestate previousState = {
+            board.sideToMove,
+            board.enPassantSquare,
+            board.whiteKingsideCastle,
+            board.whiteQueensideCastle,
+            board.blackKingsideCastle,
+            board.blackQueensideCastle,
+            board.whiteKingSquare,
+            board.blackKingSquare,
+            board.zobristKey,
+            board.halfmoveClock
+        };
+
+        if (board.makeMove(move)) {
+            board.unmakeMove(move, previousState);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// The fifty-move rule is claimable after 100 halfmoves without a pawn move or
+// capture. Checkmate takes precedence when the counter is already at the limit.
+bool adjudicateFiftyMoveRule(BitBoard& board, int ply, int& score) {
+    if (board.halfmoveClock < 100) {
+        return false;
+    }
+
+    int kingSquare = board.sideToMove == WHITE ? board.whiteKingSquare : board.blackKingSquare;
+    Color opponent = board.sideToMove == WHITE ? BLACK : WHITE;
+    if (!board.isSquareAttacked(kingSquare, opponent)) {
+        score = 0;
+        return true;
+    }
+
+    std::vector<Move> moves = board.generateMoves();
+    for (const Move& move : moves) {
+        Gamestate previousState = {
+            board.sideToMove,
+            board.enPassantSquare,
+            board.whiteKingsideCastle,
+            board.whiteQueensideCastle,
+            board.blackKingsideCastle,
+            board.blackQueensideCastle,
+            board.whiteKingSquare,
+            board.blackKingSquare,
+            board.zobristKey,
+            board.halfmoveClock
+        };
+
+        if (board.makeMove(move)) {
+            board.unmakeMove(move, previousState);
+            score = 0;
+            return true;
+        }
+    }
+
+    score = -INF + ply;
+    return true;
 }
 }
 
@@ -147,7 +227,8 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
             board.blackQueensideCastle,
             board.whiteKingSquare,
             board.blackKingSquare,
-            board.zobristKey
+            board.zobristKey,
+            board.halfmoveClock
         };
         
         if (board.makeMove(move)) {
@@ -235,7 +316,8 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
                 board.blackQueensideCastle,
                 board.whiteKingSquare,
                 board.blackKingSquare,
-                board.zobristKey
+                board.zobristKey,
+                board.halfmoveClock
             };
             
             if (!board.makeMove(move)) {
@@ -342,13 +424,27 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         }
     }
 
+    const int originalAlpha = alpha;
+    int ruleScore;
+    if (adjudicateFiftyMoveRule(board, ply, ruleScore)) {
+        --board.pathDepth;
+        return ruleScore;
+    }
+    if (hasFiftyMoveClaimByIntendedQuietMove(board)) {
+        alpha = std::max(alpha, 0);
+        if (alpha >= beta) {
+            --board.pathDepth;
+            return alpha;
+        }
+    }
+
     // before doing anything check T-table
     Move tempMove = Move(NONE, -1, -1);
     int tempEval;
 
     // A cached score can depend on a different repetition history. Keep the
     // TT move for ordering, but search this node when it has occurred before.
-    if (TT.probe(board.zobristKey, depth, alpha, beta, ply, tempEval, tempMove,
+    if (TT.probe(transpositionKey(board), depth, alpha, beta, ply, tempEval, tempMove,
                  repetitionOccurrences == 1)) {
         --board.pathDepth;
         return tempEval;
@@ -358,7 +454,11 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     Color opponent = (board.sideToMove == WHITE) ? BLACK : WHITE;
     bool inCheck = board.isSquareAttacked(kingSq, opponent);
 
-    if (depth >= 3 && !inCheck && hasNonPawnMaterial(board, board.sideToMove) &&
+    // Null-move pruning does not advance the legal halfmove clock. Disable it
+    // when this search horizon could cross the fifty-move threshold.
+    bool fiftyMoveRuleWithinHorizon = board.halfmoveClock + depth >= 100;
+    if (depth >= 3 && !inCheck && !fiftyMoveRuleWithinHorizon &&
+    hasNonPawnMaterial(board, board.sideToMove) &&
     beta < MATE_THRESHOLD && alpha > -MATE_THRESHOLD) {
         // snapshot all mutable state
         Gamestate prevState = {
@@ -370,7 +470,8 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
             board.blackQueensideCastle,
             board.whiteKingSquare,
             board.blackKingSquare,
-            board.zobristKey
+            board.zobristKey,
+            board.halfmoveClock
         };
 
         // apply null move
@@ -410,7 +511,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
 
         // prune on fail-high
         if (nullMoveScore >= beta) {
-            TT.store(board.zobristKey, depth, scoreToTT(beta, ply), TT_LOWER, Move(NONE, -1, -1));
+            TT.store(transpositionKey(board), depth, scoreToTT(beta, ply), TT_LOWER, Move(NONE, -1, -1));
             --board.pathDepth;
             return beta;
         }
@@ -472,7 +573,6 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
 
     bool foundLegalMove = false;
 
-    int originalAlpha = alpha;
     Move bestMove(NONE, -1, -1);
 
 
@@ -487,7 +587,8 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
             board.blackQueensideCastle,
             board.whiteKingSquare,
             board.blackKingSquare,
-            board.zobristKey
+            board.zobristKey,
+            board.halfmoveClock
         };
 
         // uint64_t originalKey = board.zobristKey;
@@ -545,7 +646,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
 
 
             // record a lower bound entry in TT
-            TT.store(board.zobristKey,depth, scoreToTT(beta, ply), TT_LOWER, move);
+            TT.store(transpositionKey(board), depth, scoreToTT(beta, ply), TT_LOWER, move);
 
             --board.pathDepth;
             return beta;
@@ -573,7 +674,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         ? -INF + ply  // checkmate
         : 0;             // stalemate
 
-        TT.store(board.zobristKey, depth, scoreToTT(eval, ply), TT_EXACT, Move(NONE, -1, -1));
+        TT.store(transpositionKey(board), depth, scoreToTT(eval, ply), TT_EXACT, Move(NONE, -1, -1));
         --board.pathDepth;
         return eval;
     }
@@ -586,7 +687,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         flag = TT_EXACT;
     }
 
-    TT.store(board.zobristKey, depth, scoreToTT(alpha, ply), flag, bestMove);
+    TT.store(transpositionKey(board), depth, scoreToTT(alpha, ply), flag, bestMove);
     --board.pathDepth;
     return alpha;
 }
@@ -619,6 +720,20 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
         }
     }
 
+    const int originalAlpha = alpha;
+    int ruleScore;
+    if (adjudicateFiftyMoveRule(board, ply, ruleScore)) {
+        if (board.pathDepth > 0) --board.pathDepth;
+        return ruleScore;
+    }
+    if (hasFiftyMoveClaimByIntendedQuietMove(board)) {
+        alpha = std::max(alpha, 0);
+        if (alpha >= beta) {
+            if (board.pathDepth > 0) --board.pathDepth;
+            return alpha;
+        }
+    }
+
     int kingSq = board.sideToMove == WHITE ? board.whiteKingSquare : board.blackKingSquare;
     Color opponent = board.sideToMove == WHITE ? BLACK : WHITE;
     bool inCheck = board.isSquareAttacked(kingSq, opponent);
@@ -627,19 +742,17 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
     int probeEval;
     // Quiescence scores can also depend on whether this position already
     // appeared in the game or the current search line.
-    if (TT.probe(board.zobristKey, -qdepth, alpha, beta, ply,
+    if (TT.probe(transpositionKey(board), -qdepth, alpha, beta, ply,
                  probeEval, probeMove, repetitionOccurrences == 1)) {
         if (board.pathDepth > 0) --board.pathDepth;
         return probeEval;
     }
 
-    const int originalAlpha = alpha;
-    
     // A checked side must search legal evasions; stand-pat is not valid in check.
     // Limit only non-checking capture sequences to prevent pathological extensions.
     if (qdepth >= 12 && !inCheck) {
         int eval = Evaluation::evaluate(board);
-        TT.store(board.zobristKey, -qdepth, scoreToTT(eval, ply), TT_EXACT, Move(NONE, -1, -1));
+        TT.store(transpositionKey(board), -qdepth, scoreToTT(eval, ply), TT_EXACT, Move(NONE, -1, -1));
         if (board.pathDepth > 0) --board.pathDepth;
         return eval;
     }
@@ -648,7 +761,7 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
     if (!inCheck) {
         standPat = Evaluation::evaluate(board);
         if (standPat >= beta) {
-            TT.store(board.zobristKey, -qdepth, scoreToTT(beta, ply), TT_LOWER, Move(NONE, -1, -1));
+            TT.store(transpositionKey(board), -qdepth, scoreToTT(beta, ply), TT_LOWER, Move(NONE, -1, -1));
             if (board.pathDepth > 0) --board.pathDepth;
             return beta;
         }
@@ -701,7 +814,8 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
             board.blackQueensideCastle,
             board.whiteKingSquare,
             board.blackKingSquare,
-            board.zobristKey
+            board.zobristKey,
+            board.halfmoveClock
         };
         
         if (!board.makeMove(move))
@@ -727,7 +841,7 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
         if (score >= beta) {
             // Store lower bound in TT
             updatePrincipalVariation(ply, move);
-            TT.store(board.zobristKey, -qdepth, scoreToTT(beta, ply), TT_LOWER, move);
+            TT.store(transpositionKey(board), -qdepth, scoreToTT(beta, ply), TT_LOWER, move);
             if (board.pathDepth > 0) --board.pathDepth;
             return beta;
         }
@@ -749,7 +863,7 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
     // never raise alpha. Comparing against standPat incorrectly marked those
     // fail-lows exact because standPat is -INF while in check.
     TT_FLAG finalFlag = (alpha > originalAlpha) ? TT_EXACT : TT_UPPER;
-    TT.store(board.zobristKey, -qdepth, scoreToTT(alpha, ply), finalFlag, bestMove);
+    TT.store(transpositionKey(board), -qdepth, scoreToTT(alpha, ply), finalFlag, bestMove);
     if (board.pathDepth > 0) --board.pathDepth;
 
     return alpha;

@@ -13,6 +13,7 @@ class BitBoard {
     public:
         Color sideToMove;
         int enPassantSquare = -1;
+        int halfmoveClock = 0;
 
         bool whiteKingsideCastle;
         bool whiteQueensideCastle;
