@@ -2,6 +2,7 @@
 #include "bitboard.h"
 #include "precomputedEvalTables.h"
 #include <algorithm>
+#include <cstdlib>
 
 
 const int *PST[7] = {pawnPST, knightPST, bishopPST, rookPST, queenPST, kingMdPST, kingEgPST};
@@ -10,8 +11,56 @@ const int *PST[7] = {pawnPST, knightPST, bishopPST, rookPST, queenPST, kingMdPST
 
 class Board;
 class BitBoard;
-int evaluatePawnStructure(uint64_t white_pawns, uint64_t black_pawns);
+int evaluatePawnStructure(const BitBoard &board);
 int evaluateKingSafety(const BitBoard &board);
+
+namespace {
+int kingDistance(int from, int to) {
+    const int fileDistance = std::abs((from & 7) - (to & 7));
+    const int rankDistance = std::abs((from / 8) - (to / 8));
+    return std::max(fileDistance, rankDistance);
+}
+
+int passedPawnBonus(const BitBoard &board, int square, Color pawnColor, int advancement) {
+    int bonus = 30 + advancement * advancement * 5;
+    const int file = square & 7;
+    const int rank = square / 8;
+    const int promotionSquare = pawnColor == WHITE ? file : 56 + file;
+    const int movesToPromotion = pawnColor == WHITE ? rank : 7 - rank;
+    const int enemyKing = pawnColor == WHITE ? board.blackKingSquare : board.whiteKingSquare;
+    const int friendlyKing = pawnColor == WHITE ? board.whiteKingSquare : board.blackKingSquare;
+    const int defenderMoves = movesToPromotion - (board.sideToMove == pawnColor ? 1 : 0);
+
+    // A pawn-only passer bonus is misleading when the defending king can
+    // occupy the promotion square before the pawn arrives. Apply this only
+    // when the pawn's route is clear and its own king cannot support promotion.
+    bool clearRoute = true;
+    const int step = pawnColor == WHITE ? -8 : 8;
+    for (int target = square + step;
+         pawnColor == WHITE ? target >= promotionSquare : target <= promotionSquare;
+         target += step) {
+        const Piece occupant = board.getPiece(target);
+        if (occupant == NONE) continue;
+        if (target == promotionSquare && occupant == (pawnColor == WHITE ? BK : WK)) {
+            clearRoute = true;
+            break;
+        }
+        clearRoute = false;
+        break;
+    }
+
+    const int enemyDistance = kingDistance(enemyKing, promotionSquare);
+    const int friendlyDistance = kingDistance(friendlyKing, promotionSquare);
+    const bool enemyKingCanStop = clearRoute && defenderMoves >= 0 &&
+        enemyDistance <= defenderMoves && enemyDistance < friendlyDistance &&
+        !board.isSquareAttacked(promotionSquare, pawnColor);
+    if (enemyKingCanStop) {
+        bonus = std::min(bonus, 30);
+    }
+
+    return bonus;
+}
+}
 
 int Evaluation::evaluate(const BitBoard &board) {
     int phaseMaterial = 0;
@@ -111,7 +160,7 @@ int Evaluation::evaluate(const BitBoard &board) {
     rookFileBonus(board.getBlackRooks(), board.getBlackPawns(), board.getWhitePawns(), -1);
 
     // Pawn Structure
-    score += evaluatePawnStructure(board.whitePawns, board.blackPawns);
+    score += evaluatePawnStructure(board);
 
     // King Safety (only in middlegame)
     if (!endgame) {
@@ -205,8 +254,10 @@ int evaluateKingSafety(const BitBoard &board) {
     return score;
 }
 
-int evaluatePawnStructure(uint64_t white_pawns, uint64_t black_pawns) {
+int evaluatePawnStructure(const BitBoard &board) {
     int score = 0;
+    const uint64_t white_pawns = board.whitePawns;
+    const uint64_t black_pawns = board.blackPawns;
 
     // Counters for pawn features
     int whiteIsolatedCount = 0, whiteDoubledCount = 0, whitePassedScore = 0;
@@ -241,7 +292,7 @@ int evaluatePawnStructure(uint64_t white_pawns, uint64_t black_pawns) {
         uint64_t span = SPAN_SOUTH[square] & (FILES[file] | ADJACENT_FILES[file]);
         if ((black_pawns & span) == 0) {
             int advancement = 6 - square / 8;
-            whitePassedScore += 30 + advancement * advancement * 5;
+            whitePassedScore += passedPawnBonus(board, square, WHITE, advancement);
         }
     }
 
@@ -255,7 +306,7 @@ int evaluatePawnStructure(uint64_t white_pawns, uint64_t black_pawns) {
         uint64_t span = SPAN_NORTH[square] & (FILES[file] | ADJACENT_FILES[file]);
         if ((white_pawns & span) == 0) {
             int advancement = square / 8 - 1;
-            blackPassedScore += 30 + advancement * advancement * 5;
+            blackPassedScore += passedPawnBonus(board, square, BLACK, advancement);
         }
     }
 
