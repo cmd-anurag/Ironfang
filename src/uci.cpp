@@ -59,7 +59,7 @@ void uciLoop() {
         iss >> token;
 
         if(token == "uci") {
-            std::cout << "id name Ironfangv12\n" << std::flush;
+            std::cout << "id name Ironfangv13\n" << std::flush;
             std::cout << "id author dark\n" << std::flush;
             std::cout << "option name RootDiagnostics type check default false\n" << std::flush;
             std::cout << "uciok\n" << std::flush;
