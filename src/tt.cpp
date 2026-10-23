@@ -1,6 +1,50 @@
 #include "tt.h"
 #include <cstring>
-#include "algorithm"
+#include <algorithm>
+
+namespace {
+constexpr uint16_t INVALID_PACKED_MOVE = 0xFFFF;
+constexpr uint8_t TT_FLAG_MASK = 0x03;
+constexpr int TT_AGE_MASK = 0x3F;
+
+uint16_t packMove(const Move &move)
+{
+    if (move.from < 0 || move.from >= 64 || move.to < 0 || move.to >= 64)
+        return INVALID_PACKED_MOVE;
+
+    const uint16_t promotionType = static_cast<uint16_t>(move.promotion & 7);
+    return static_cast<uint16_t>(move.from | (move.to << 6) | (promotionType << 12));
+}
+
+Move unpackMove(uint16_t packedMove)
+{
+    if (packedMove == INVALID_PACKED_MOVE)
+        return Move(NONE, -1, -1);
+
+    const int from = packedMove & 0x3F;
+    const int to = (packedMove >> 6) & 0x3F;
+    const int promotionType = (packedMove >> 12) & 0x07;
+    // The caller uses this only as a hash-move hint. Piece and capture data are
+    // already present in the generated move and are not needed for matching.
+    return Move(NONE, from, to, promotionType);
+}
+
+uint8_t packMetadata(TT_FLAG flag, int age)
+{
+    return static_cast<uint8_t>(((age & TT_AGE_MASK) << 2) |
+                                (static_cast<uint8_t>(flag) & TT_FLAG_MASK));
+}
+
+int storedAge(const TTEntry &entry)
+{
+    return entry.metadata >> 2;
+}
+
+TT_FLAG storedFlag(const TTEntry &entry)
+{
+    return static_cast<TT_FLAG>(entry.metadata & TT_FLAG_MASK);
+}
+}
 
 TranspositionTable::TranspositionTable()
 {
@@ -22,7 +66,7 @@ bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int be
     if (entry.key == zobristKey) {
         ++keyMatchCount;
         // Always extract the move if it's the correct position
-        outMove = entry.bestMove;
+        outMove = unpackMove(entry.packedMove);
 
         // Check if stored depth is enough
         if (allowCutoff && entry.depth >= depth) {
@@ -34,7 +78,7 @@ bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int be
             if (eval >= mateThreshold) eval -= ply;
             else if (eval <= -mateThreshold) eval += ply;
 
-            switch(entry.flag) {
+            switch(storedFlag(entry)) {
                 case TT_EXACT:
                     ++hitCount;
                     outEval = eval;
@@ -87,7 +131,7 @@ void TranspositionTable::store(uint64_t zobristKey, int depth, int eval,
     }
     else {
         // Different key: compare old vs new “priority score”
-        int ageDiff = currentAge - entry.age;
+        int ageDiff = (currentAge - storedAge(entry) + 64) & TT_AGE_MASK;
         int oldScore = entry.depth - ageDiff;
         int newScore = depth;  // fresh entry has no age penalty
 
@@ -100,16 +144,15 @@ void TranspositionTable::store(uint64_t zobristKey, int depth, int eval,
         else if (isOverwrite)     ++overwritten;
 
         entry.key      = zobristKey;
-        entry.depth    = depth;
+        entry.depth    = static_cast<uint8_t>(std::clamp(depth, 0, 255));
         entry.eval     = eval;
-        entry.flag     = flag;
-        entry.bestMove = bestMove;
-        entry.age      = currentAge;
+        entry.packedMove = packMove(bestMove);
+        entry.metadata = packMetadata(flag, currentAge);
         ++actualStores;
     }
     else if (entry.key == zobristKey && bestMove.piece != NONE) {
         // still update the move if it’s a better move for same position
-        entry.bestMove = bestMove;
+        entry.packedMove = packMove(bestMove);
     }
 }
 

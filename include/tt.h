@@ -1,9 +1,7 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
 #include "move.h"
-
-constexpr size_t TT_SIZE = 1 << 23; // 2^23
-constexpr size_t TT_MASK = TT_SIZE  - 1;
 
 enum TT_FLAG  { 
     TT_EXACT,
@@ -13,12 +11,19 @@ enum TT_FLAG  {
 
 struct TTEntry {
     uint64_t key;
-    int depth;
     int eval;
-    TT_FLAG flag;
-    Move bestMove;
-    int age;
+    uint16_t packedMove;
+    uint8_t depth;
+    // Two low bits hold TT_FLAG; the upper six bits hold the replacement age.
+    uint8_t metadata;
 };
+
+static_assert(sizeof(TTEntry) == 16, "TT entries should stay compact");
+
+// Use a 128 MiB budget with compact 16-byte entries.
+constexpr size_t TT_SIZE = (128ULL * 1024 * 1024) / sizeof(TTEntry);
+constexpr size_t TT_MASK = TT_SIZE - 1;
+static_assert((TT_SIZE & TT_MASK) == 0, "TT_SIZE must be a power of two");
 
 class TranspositionTable {
     public:
