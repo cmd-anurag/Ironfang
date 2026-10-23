@@ -8,3 +8,4 @@ chess
 /build-windows/
 /dist/
 perf.data
+bench-results*.csv

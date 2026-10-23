@@ -15,6 +15,10 @@ std::array<std::array<int, 64>, 64> historyHeuristics{};
 TranspositionTable TT;
 
 uint64_t nodeCount = 0;
+uint64_t quiescenceNodeCount = 0;
+uint64_t betaCutoffCount = 0;
+uint64_t firstMoveCutoffCount = 0;
+int selectiveDepth = 0;
 
 static int scoreToTT(int score, int ply) {
     if (score >= MATE_THRESHOLD) return score + ply;
@@ -26,6 +30,10 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     maxDepth = std::max(1, std::min(maxDepth, MAX_DEPTH));
     // Reset counters
     nodeCount = 0;
+    quiescenceNodeCount = 0;
+    betaCutoffCount = 0;
+    firstMoveCutoffCount = 0;
+    selectiveDepth = 0;
     historyHeuristics = {};
     TT.lookupCount = 0;
     TT.hitCount = 0;
@@ -38,6 +46,20 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     // Start timing
     auto startTime = std::chrono::steady_clock::now();
     int timeForThinking = timeLimit;
+
+    auto emitSearchStats = [&]() {
+        std::cout << "info string stats"
+                  << " qnodes=" << quiescenceNodeCount
+                  << " tt_probes=" << TT.lookupCount
+                  << " tt_keyhits=" << TT.keyMatchCount
+                  << " tt_cutoffs=" << TT.hitCount
+                  << " tt_store_attempts=" << TT.totalStoreAttempts
+                  << " tt_writes=" << TT.actualStores
+                  << " tt_overwrites=" << TT.overwritten
+                  << " ab_cutoffs=" << betaCutoffCount
+                  << " first_move_cutoffs=" << firstMoveCutoffCount
+                  << "\n" << std::flush;
+    };
     
     // Set a hard cutoff time slightly below the time limit (95%)
     int hardTimeLimit = timeLimit > 0 ? std::max(1, static_cast<int>(timeLimit * 0.95)) : -1;
@@ -92,8 +114,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     //                          ITERATIVE DEEPENING SEARCH
     // ------------------------------------------------------------------------------------
     for (int depth = 1; depth <= maxDepth; depth++) {
-
-        
+        selectiveDepth = 0;
 
         // Skip time check on depth 1, always do at least one ply
         if (depth > 1 && timeForThinking > 0) {
@@ -185,6 +206,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
                 if (elapsedMs >= hardTimeLimit) {
                     // If we're out of time, exit without updating bestMove
                     // to use results from the previous completed depth
+                    emitSearchStats();
                     return bestMove;
                 }
             }
@@ -200,13 +222,17 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
         auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
             currentTime - startTime).count();
         
-        uint64_t nps = 0;
-        if (elapsedMs > 0) {
-            nps = (nodeCount * 1000) / elapsedMs; // nodes per second
-        }
+        const auto elapsedUs = std::chrono::duration_cast<std::chrono::microseconds>(
+            currentTime - startTime).count();
+        const uint64_t nps = elapsedUs > 0
+            ? (nodeCount * 1000000) / static_cast<uint64_t>(elapsedUs)
+            : 0;
 
         // Output information
-        std::cout << "info depth " << depth << " score ";
+        std::cout << "info depth " << depth
+                  << " seldepth " << selectiveDepth
+                  << " time " << elapsedMs
+                  << " score ";
         if (bestScore >= MATE_THRESHOLD || bestScore <= -MATE_THRESHOLD) {
             int pliesToMate = INF - std::abs(bestScore);
             int mateMoves = (pliesToMate + 1) / 2;
@@ -218,19 +244,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
                   << " nps " << nps
                   << " pv " << moveToUCI(bestMove) << "\n" << std::flush;
 
-        // // TT - stats
-        // std::cout << "info string TT: depth=" << depth
-        //   << " occ=" << TT.entriesOccupied
-        //   << " (" << (100.0 * TT.entriesOccupied / TT_SIZE) << "%)"
-        //   << " hits=" << TT.hitCount
-        //   << " lookups=" << TT.lookupCount
-        //   << " hitrate=" << (100.0 * TT.hitCount / std::max(TT.lookupCount, (uint64_t)1ull)) << "%"
-        //   << " Key matches=" << (100.0 * TT.keyMatchCount / std::max(TT.lookupCount, (uint64_t)1ull)) << "%"
-        //   << " overwrites=" << TT.overwritten
-        //   << " stores=" << TT.actualStores
-        //   << std::endl;
-
-          
+        emitSearchStats();
     }
 
     return bestMove;
@@ -238,6 +252,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
 
 int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, int ply) {
     ++nodeCount; // an efficiency metric
+    selectiveDepth = std::max(selectiveDepth, ply + 1);
 
     if (ply >= MAX_PLY - 1) {
         return Evaluation::evaluate(board);
@@ -431,6 +446,8 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
 
         // Beta cutoff
         if (score >= beta) {
+            ++betaCutoffCount;
+            if (moveIndex == 1) ++firstMoveCutoffCount;
         
             // record KILLER moves here (nice name)
             if(!move.capture && depth <= MAX_DEPTH && !(move == killerMoves[depth][0])) {
@@ -487,6 +504,8 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
 
 int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, int ply) {
     ++nodeCount;
+    ++quiescenceNodeCount;
+    selectiveDepth = std::max(selectiveDepth, ply + 1);
 
     if (ply >= MAX_PLY - 1) return Evaluation::evaluate(board);
 

@@ -44,9 +44,9 @@ class TranspositionTable {
         );
 
         void clear();
-        uint64_t lookupCount = 0; 
-        uint64_t hitCount    = 0;
-        uint64_t keyMatchCount   = 0;
+        uint64_t lookupCount = 0;      // all TT probes, including quiescence probes
+        uint64_t hitCount = 0;         // probes that returned a usable alpha-beta bound
+        uint64_t keyMatchCount = 0;    // probes whose indexed entry matched the full key
         size_t totalStoreAttempts = 0;
         size_t actualStores = 0;
         size_t overwritten = 0;

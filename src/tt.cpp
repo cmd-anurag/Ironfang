@@ -115,7 +115,8 @@ void TranspositionTable::store(uint64_t zobristKey, int depth, int eval,
 
 void TranspositionTable::clear() {
     for (size_t i = 0; i < TT_SIZE; ++i)
-    table[i] = TTEntry{};
+        table[i] = TTEntry{};
+    entriesOccupied = 0;
 }
 
 size_t TranspositionTable::countOccupied() const {
