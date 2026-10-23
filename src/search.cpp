@@ -20,6 +20,30 @@ uint64_t betaCutoffCount = 0;
 uint64_t firstMoveCutoffCount = 0;
 int selectiveDepth = 0;
 
+namespace {
+constexpr uint64_t TIME_CHECK_NODE_INTERVAL = 1024;
+std::chrono::steady_clock::time_point hardSearchDeadline;
+bool hasHardSearchDeadline = false;
+bool searchStoppedByTime = false;
+
+bool checkSearchDeadline(bool force = false) {
+    if (searchStoppedByTime) {
+        return true;
+    }
+    if (!hasHardSearchDeadline) {
+        return false;
+    }
+    if (!force && (nodeCount % TIME_CHECK_NODE_INTERVAL) != 0) {
+        return false;
+    }
+
+    if (std::chrono::steady_clock::now() >= hardSearchDeadline) {
+        searchStoppedByTime = true;
+    }
+    return searchStoppedByTime;
+}
+}
+
 static int scoreToTT(int score, int ply) {
     if (score >= MATE_THRESHOLD) return score + ply;
     if (score <= -MATE_THRESHOLD) return score - ply;
@@ -46,6 +70,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     // Start timing
     auto startTime = std::chrono::steady_clock::now();
     int timeForThinking = timeLimit;
+    searchStoppedByTime = false;
 
     auto emitSearchStats = [&]() {
         std::cout << "info string stats"
@@ -57,12 +82,19 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
                   << " tt_writes=" << TT.actualStores
                   << " tt_overwrites=" << TT.overwritten
                   << " ab_cutoffs=" << betaCutoffCount
-                  << " first_move_cutoffs=" << firstMoveCutoffCount
-                  << "\n" << std::flush;
+                  << " first_move_cutoffs=" << firstMoveCutoffCount;
+        if (searchStoppedByTime) {
+            std::cout << " stop=hard_time";
+        }
+        std::cout << "\n" << std::flush;
     };
     
     // Set a hard cutoff time slightly below the time limit (95%)
     int hardTimeLimit = timeLimit > 0 ? std::max(1, static_cast<int>(timeLimit * 0.95)) : -1;
+    hasHardSearchDeadline = hardTimeLimit > 0;
+    if (hasHardSearchDeadline) {
+        hardSearchDeadline = startTime + std::chrono::milliseconds(hardTimeLimit);
+    }
     
     // Default move (will be overwritten soon)
     Move bestMove{NONE, -1, -1};
@@ -115,6 +147,10 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     // ------------------------------------------------------------------------------------
     for (int depth = 1; depth <= maxDepth; depth++) {
         selectiveDepth = 0;
+
+        if (depth > 1 && checkSearchDeadline(true)) {
+            break;
+        }
 
         // Skip time check on depth 1, always do at least one ply
         if (depth > 1 && timeForThinking > 0) {
@@ -186,6 +222,13 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
             int score = -minimaxAlphaBeta(board, depth - 1, -beta, -alpha, 0);
             
             board.unmakeMove(move, prevdata);
+
+            // A timed-out recursive search returns a neutral placeholder score.
+            // Discard the incomplete iteration and keep the last completed move.
+            if (checkSearchDeadline(true)) {
+                emitSearchStats();
+                return bestMove;
+            }
             
             // Check if this is a better move
             if (score > iterationBestScore) {
@@ -197,19 +240,6 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
                 }
             }
             
-            // Time check after each move - use hard time limit
-            if (hardTimeLimit > 0) {
-                auto currentTime = std::chrono::steady_clock::now();
-                auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    currentTime - startTime).count();
-                    
-                if (elapsedMs >= hardTimeLimit) {
-                    // If we're out of time, exit without updating bestMove
-                    // to use results from the previous completed depth
-                    emitSearchStats();
-                    return bestMove;
-                }
-            }
         }
         
         // Only update bestMove if we completed the iteration
@@ -243,16 +273,19 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
         std::cout << " nodes " << nodeCount << " hashfull " << hashFull
                   << " nps " << nps
                   << " pv " << moveToUCI(bestMove) << "\n" << std::flush;
-
-        emitSearchStats();
     }
 
+    emitSearchStats();
     return bestMove;
 }
 
 int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, int ply) {
     ++nodeCount; // an efficiency metric
     selectiveDepth = std::max(selectiveDepth, ply + 1);
+
+    if (checkSearchDeadline()) {
+        return 0;
+    }
 
     if (ply >= MAX_PLY - 1) {
         return Evaluation::evaluate(board);
@@ -326,6 +359,11 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         board.whiteKingSquare      = prevState.whiteKingSquare;
         board.blackKingSquare      = prevState.blackKingSquare;
         board.zobristKey           = prevState.zobristKey;
+
+        if (searchStoppedByTime) {
+            --board.pathDepth;
+            return 0;
+        }
 
         // prune on fail-high
         if (nullMoveScore >= beta) {
@@ -433,7 +471,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
             score = -minimaxAlphaBeta(board, depth - 1 - reduction, -alpha - 1, -alpha, ply+1);
             
             // If it looks promising, do a full search
-            if (score > alpha) {
+            if (!searchStoppedByTime && score > alpha) {
                 score = -minimaxAlphaBeta(board, depth - 1, -beta, -alpha, ply+1);
             }
         } else {
@@ -443,6 +481,11 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         board.unmakeMove(move, prevdata);
         ++moveIndex;
         // assert(board.zobristKey == originalKey);
+
+        if (searchStoppedByTime) {
+            --board.pathDepth;
+            return 0;
+        }
 
         // Beta cutoff
         if (score >= beta) {
@@ -506,6 +549,10 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
     ++nodeCount;
     ++quiescenceNodeCount;
     selectiveDepth = std::max(selectiveDepth, ply + 1);
+
+    if (checkSearchDeadline()) {
+        return 0;
+    }
 
     if (ply >= MAX_PLY - 1) return Evaluation::evaluate(board);
 
@@ -613,6 +660,11 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
             
         int score = -quiescenceSearch(board, -beta, -alpha, qdepth + 1, ply+1);
         board.unmakeMove(move, prevdata);
+
+        if (searchStoppedByTime) {
+            if (board.pathDepth > 0) --board.pathDepth;
+            return 0;
+        }
         
         if (score >= beta) {
             // Store lower bound in TT
