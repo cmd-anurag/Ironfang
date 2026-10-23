@@ -16,6 +16,7 @@ class Search {
     public:
 
         static Move findBestMove(BitBoard &board, int depth, int timeLimit);
+        static void setRootDiagnostics(bool enabled);
     private:
         static bool hasNonPawnMaterial(const BitBoard& board, Color side);
         static int minimaxAlphaBeta(BitBoard &board, int depth, int alpha, int beta, int ply);

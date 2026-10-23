@@ -29,6 +29,11 @@ std::array<std::vector<Move>, MAX_PLY> searchMoveBuffers;
 std::chrono::steady_clock::time_point hardSearchDeadline;
 bool hasHardSearchDeadline = false;
 bool searchStoppedByTime = false;
+bool rootDiagnosticsEnabled = false;
+uint64_t lateMoveReductionCount = 0;
+uint64_t lateMoveResearchCount = 0;
+uint64_t rootPvsResearchCount = 0;
+uint64_t lmrCheckExemptionCount = 0;
 
 void updatePrincipalVariation(int ply, const Move& move) {
     if (ply < 0 || ply >= MAX_PLY - 1) {
@@ -140,6 +145,10 @@ bool adjudicateFiftyMoveRule(BitBoard& board, int ply, int& score) {
 }
 }
 
+void Search::setRootDiagnostics(bool enabled) {
+    rootDiagnosticsEnabled = enabled;
+}
+
 static int scoreToTT(int score, int ply) {
     if (score >= MATE_THRESHOLD) return score + ply;
     if (score <= -MATE_THRESHOLD) return score - ply;
@@ -154,6 +163,10 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     betaCutoffCount = 0;
     firstMoveCutoffCount = 0;
     selectiveDepth = 0;
+    lateMoveReductionCount = 0;
+    lateMoveResearchCount = 0;
+    rootPvsResearchCount = 0;
+    lmrCheckExemptionCount = 0;
     pvLength.fill(0);
     historyHeuristics = {};
     TT.lookupCount = 0;
@@ -166,11 +179,14 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     
     // Start timing
     auto startTime = std::chrono::steady_clock::now();
-    int timeForThinking = timeLimit;
     searchStoppedByTime = false;
 
     auto emitSearchStats = [&]() {
+        const auto statsElapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - startTime).count();
         std::cout << "info string stats"
+                  << " total_nodes=" << nodeCount
+                  << " elapsed_ms=" << statsElapsedMs
                   << " qnodes=" << quiescenceNodeCount
                   << " tt_probes=" << TT.lookupCount
                   << " tt_keyhits=" << TT.keyMatchCount
@@ -179,7 +195,11 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
                   << " tt_writes=" << TT.actualStores
                   << " tt_overwrites=" << TT.overwritten
                   << " ab_cutoffs=" << betaCutoffCount
-                  << " first_move_cutoffs=" << firstMoveCutoffCount;
+                  << " first_move_cutoffs=" << firstMoveCutoffCount
+                  << " lmr_reductions=" << lateMoveReductionCount
+                  << " lmr_researches=" << lateMoveResearchCount
+                  << " lmr_check_exemptions=" << lmrCheckExemptionCount
+                  << " root_pvs_researches=" << rootPvsResearchCount;
         if (searchStoppedByTime) {
             std::cout << " stop=hard_time";
         }
@@ -254,22 +274,6 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
             break;
         }
 
-        // Skip time check on depth 1, always do at least one ply
-        if (depth > 1 && timeForThinking > 0) {
-            auto currentTime = std::chrono::steady_clock::now();
-            auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                currentTime - startTime).count();
-                
-            // Check if we have enough time for another iteration
-            // Use progressively more conservative estimates as we go deeper
-            int timeNeededFactor = (depth >= 6) ? 4 : (depth >= 4) ? 3 : 2;
-            
-            // If the elapsed time * factor > time limit, stop searching
-            if (elapsedMs * timeNeededFactor > timeForThinking) {
-                break;
-            }
-        }
-        
         // Start a new iteration
         int alpha = -INF;
         int beta = INF;
@@ -305,7 +309,10 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
         });
 
         
-        // Search all moves at this depth
+        // Search all moves at this depth. Principal Variation Search uses a
+        // null window for later root moves, then re-searches any move that
+        // improves alpha so its score and PV are fully resolved.
+        int searchedMoves = 0;
         for (const Move& move : moves) {
             Gamestate prevdata = {
                 board.sideToMove,
@@ -323,8 +330,33 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
             if (!board.makeMove(move)) {
                 continue;
             }
-            // Normal search with full alpha-beta window
-            int score = -minimaxAlphaBeta(board, depth - 1, -beta, -alpha, 0);
+            const uint64_t nodesBefore = nodeCount;
+            const uint64_t reductionsBefore = lateMoveReductionCount;
+            const uint64_t researchesBefore = lateMoveResearchCount;
+            int score;
+            if (rootDiagnosticsEnabled) {
+                score = -minimaxAlphaBeta(board, depth - 1, -INF, INF, 0);
+            } else if (searchedMoves == 0) {
+                score = -minimaxAlphaBeta(board, depth - 1, -beta, -alpha, 0);
+            } else {
+                score = -minimaxAlphaBeta(board, depth - 1, -alpha - 1, -alpha, 0);
+                if (!searchStoppedByTime && score > alpha) {
+                    ++rootPvsResearchCount;
+                    score = -minimaxAlphaBeta(board, depth - 1, -beta, -alpha, 0);
+                }
+            }
+            ++searchedMoves;
+
+            std::array<Move, MAX_PLY> candidatePV{};
+            int candidatePVLength = 1;
+            candidatePV[0] = move;
+            if (rootDiagnosticsEnabled) {
+                const int continuationLength = std::min(pvLength[0], MAX_PLY - 1);
+                for (int index = 0; index < continuationLength; ++index) {
+                    candidatePV[index + 1] = pvTable[0][index];
+                }
+                candidatePVLength += continuationLength;
+            }
             
             board.unmakeMove(move, prevdata);
 
@@ -333,6 +365,20 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
             if (checkSearchDeadline(true)) {
                 emitSearchStats();
                 return bestMove;
+            }
+
+            if (rootDiagnosticsEnabled) {
+                std::cout << "info string root depth=" << depth
+                          << " move=" << moveToUCI(move)
+                          << " score=" << score
+                          << " nodes=" << (nodeCount - nodesBefore)
+                          << " lmr=" << (lateMoveReductionCount - reductionsBefore)
+                          << " lmr_researches=" << (lateMoveResearchCount - researchesBefore)
+                          << " pv";
+                for (int index = 0; index < candidatePVLength; ++index) {
+                    std::cout << ' ' << moveToUCI(candidatePV[index]);
+                }
+                std::cout << "\n" << std::flush;
             }
             
             // Check if this is a better move
@@ -605,18 +651,33 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
                     move != killerMoves[depth][0] &&
                     move != killerMoves[depth][1];
 
+        bool givesCheck = false;
+        if (isReducible && depth >= 3 && moveIndex > 0) {
+            const int defendingKing = board.sideToMove == WHITE
+                ? board.whiteKingSquare
+                : board.blackKingSquare;
+            givesCheck = board.isSquareAttacked(defendingKing, prevdata.sideToMove);
+            if (givesCheck) ++lmrCheckExemptionCount;
+        }
+        isReducible = isReducible && !givesCheck;
+
         int reduction = 0;
-        if (depth >= 3 && moveIndex > 0 && isReducible) {
+        // At ply 0 each node is an opponent response to a root candidate.
+        // Keep those replies full-depth so a reduced refutation cannot hide
+        // behind the root's null-window PVS probe.
+        if (ply > 0 && depth >= 3 && moveIndex > 0 && isReducible) {
             reduction = 1;
-            if (depth >= 6 && moveIndex >= 4) reduction+=2;
+            if (depth >= 6 && moveIndex >= 4) reduction += 2;
         }
         
         if (reduction > 0) {
+            ++lateMoveReductionCount;
             // Try reduced depth search first
             score = -minimaxAlphaBeta(board, depth - 1 - reduction, -alpha - 1, -alpha, ply+1);
             
             // If it looks promising, do a full search
             if (!searchStoppedByTime && score > alpha) {
+                ++lateMoveResearchCount;
                 score = -minimaxAlphaBeta(board, depth - 1, -beta, -alpha, ply+1);
             }
         } else {

@@ -16,10 +16,16 @@ FIELDS = [
     "position_id",
     "category",
     "fen",
+    "sf_reference_move",
+    "matches_sf_reference",
+    "requested_depth",
+    "requested_movetime_ms",
     "depth",
     "seldepth",
     "time_ms",
     "nodes",
+    "total_nodes",
+    "elapsed_ms",
     "nps",
     "hashfull",
     "score_type",
@@ -39,6 +45,10 @@ FIELDS = [
     "ab_cutoffs",
     "first_move_cutoffs",
     "first_move_cutoff_pct",
+    "lmr_reductions",
+    "lmr_researches",
+    "lmr_check_exemptions",
+    "root_pvs_researches",
 ]
 
 
@@ -56,7 +66,7 @@ def percent(numerator, denominator):
         return ""
 
 
-def run_position(engine, fen, depth, timeout):
+def run_position(engine, fen, go_command, timeout):
     process = subprocess.Popen(
         [str(engine)],
         text=True,
@@ -78,6 +88,7 @@ def run_position(engine, fen, depth, timeout):
     reader = threading.Thread(target=read_output, daemon=True)
     reader.start()
     output = []
+    search_elapsed_ms = ""
 
     def send(command):
         process.stdin.write(command + "\n")
@@ -106,8 +117,10 @@ def run_position(engine, fen, depth, timeout):
         read_until(lambda line: line.strip() == "readyok", deadline)
         send("ucinewgame")
         send(f"position fen {fen}")
-        send(f"go depth {depth}")
+        search_started = time.monotonic()
+        send(go_command)
         read_until(lambda line: line.startswith("bestmove "), deadline)
+        search_elapsed_ms = round((time.monotonic() - search_started) * 1000)
         send("quit")
         process.stdin.close()
         process.wait(timeout=max(1.0, deadline - time.monotonic()))
@@ -155,8 +168,11 @@ def run_position(engine, fen, depth, timeout):
 
     if "bestmove" not in row:
         raise RuntimeError(
-            "engine did not return bestmove; output was:\n" + result.stdout
+            "engine did not return bestmove; output was:\n" + "\n".join(output)
         )
+    # Wall time covers timed searches that finish on an incomplete iteration,
+    # while elapsed_ms in the stats line records the engine's own timer.
+    row["time_ms"] = search_elapsed_ms
     return row
 
 
@@ -164,7 +180,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--engine", required=True, type=pathlib.Path)
     parser.add_argument("--label", default="engine")
-    parser.add_argument("--depth", type=int, default=8)
+    search_args = parser.add_mutually_exclusive_group()
+    search_args.add_argument("--depth", type=int)
+    search_args.add_argument("--movetime", type=int, help="search each position for this many milliseconds")
     parser.add_argument("--timeout", type=float, default=180.0)
     parser.add_argument(
         "--positions",
@@ -176,11 +194,16 @@ def main():
     parser.add_argument("--output", type=pathlib.Path, default=pathlib.Path("bench-results.csv"))
     args = parser.parse_args()
 
+    if args.depth is None and args.movetime is None:
+        args.depth = 8
+
     engine = args.engine.resolve()
     if not engine.is_file():
         parser.error(f"engine executable does not exist: {engine}")
-    if args.depth < 1:
+    if args.depth is not None and args.depth < 1:
         parser.error("depth must be at least 1")
+    if args.movetime is not None and args.movetime < 1:
+        parser.error("movetime must be at least 1 millisecond")
 
     with args.positions.open(newline="", encoding="utf-8") as source:
         positions = list(csv.DictReader(source))
@@ -188,18 +211,39 @@ def main():
         parser.error(f"position suite is empty: {args.positions}")
 
     results = []
+    go_command = f"go depth {args.depth}" if args.depth is not None else f"go movetime {args.movetime}"
+    search_description = (
+        f"depth {args.depth}" if args.depth is not None else f"movetime {args.movetime} ms"
+    )
     for position in positions:
-        print(f"{position['id']}: searching depth {args.depth}...", flush=True)
-        row = run_position(engine, position["fen"], args.depth, args.timeout)
+        print(f"{position['id']}: searching {search_description}...", flush=True)
+        row = run_position(engine, position["fen"], go_command, args.timeout)
         row.update(
             {
                 "label": args.label,
                 "position_id": position["id"],
                 "category": position["category"],
                 "fen": position["fen"],
+                "requested_depth": args.depth if args.depth is not None else "",
+                "requested_movetime_ms": args.movetime if args.movetime is not None else "",
             }
         )
-        row["qnode_pct"] = percent(row.get("qnodes"), row.get("nodes"))
+        reference_move = position.get("sf_reference_move", "").strip()
+        row["sf_reference_move"] = reference_move
+        row["matches_sf_reference"] = (
+            str(row.get("bestmove") == reference_move).lower()
+            if reference_move
+            else ""
+        )
+        if args.movetime is not None and not row.get("total_nodes"):
+            # Older UCI builds may report counters from an interrupted
+            # iteration but only completed-iteration nodes, so the ratio is
+            # not meaningful without a total-node counter.
+            row["qnode_pct"] = ""
+        else:
+            row["qnode_pct"] = percent(
+                row.get("qnodes"), row.get("total_nodes") or row.get("nodes")
+            )
         row["tt_keyhit_pct"] = percent(
             row.get("tt_keyhits"), row.get("tt_probes")
         )
@@ -215,6 +259,12 @@ def main():
             f"depth {row.get('depth', '?')}, "
             f"nodes {row.get('nodes', '?')}, "
             f"nps {row.get('nps', '?')}"
+            + (
+                f", SF reference {reference_move} "
+                f"({'match' if row['matches_sf_reference'] == 'true' else 'differs'})"
+                if reference_move
+                else ""
+            )
         )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)

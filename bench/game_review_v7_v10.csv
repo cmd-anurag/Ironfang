@@ -1,0 +1,10 @@
+id,category,fen,sf_reference_move
+game_before_16_nc3,game_review,"5rk1/r1p1qppp/bp1bpn2/3p4/P1nP4/3BPN2/1P2QPPP/RNR1B1K1 w - - 5 16",b2b3
+game_before_16_c5,game_review,"5rk1/r1p1qppp/bp1bpn2/3p4/P1nP4/2NBPN2/1P2QPPP/R1R1B1K1 b - - 6 16",f8a8
+game_after_16_c5,game_review,"5rk1/r3qppp/bp1bpn2/2pp4/P1nP4/2NBPN2/1P2QPPP/R1R1B1K1 w - - 0 17",b2b3
+game_before_18_cxd4,game_review,"2r3k1/r3qppp/bp1bpn2/2pp4/P1nP4/1PNBPN2/2Q2PPP/R1R1B1K1 b - - 0 18",c4a3
+game_after_18_cxd4,game_review,"2r3k1/r3qppp/bp1bpn2/3p4/P1np4/1PNBPN2/2Q2PPP/R1R1B1K1 w - - 0 19",f3d4
+game_after_19_exd4,game_review,"2r3k1/r3qppp/bp1bpn2/3p4/P1nP4/1PNB1N2/2Q2PPP/R1R1B1K1 b - - 0 19",c4a3
+game_after_19_bf4,game_review,"2r3k1/r3qppp/bp2pn2/3p4/P1nP1b2/1PNB1N2/2Q2PPP/R1R1B1K1 w - - 1 20",b3c4
+game_before_27_rb4,game_review,"2r3k1/4qppp/1p2pn2/3pN3/P1rP4/2NQ3P/3B1PP1/R5K1 b - - 2 27",c4c7
+game_after_27_rb4,game_review,"2r3k1/4qppp/1p2pn2/3pN3/Pr1P4/2NQ3P/3B1PP1/R5K1 w - - 3 28",c3d1

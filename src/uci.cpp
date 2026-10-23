@@ -61,7 +61,19 @@ void uciLoop() {
         if(token == "uci") {
             std::cout << "id name Ironfangv10\n" << std::flush;
             std::cout << "id author dark\n" << std::flush;
+            std::cout << "option name RootDiagnostics type check default false\n" << std::flush;
             std::cout << "uciok\n" << std::flush;
+        }
+        else if (token == "setoption") {
+            std::string nameToken;
+            std::string optionName;
+            std::string valueToken;
+            std::string value;
+            iss >> nameToken >> optionName >> valueToken >> value;
+            if (nameToken == "name" && optionName == "RootDiagnostics" &&
+                valueToken == "value") {
+                Search::setRootDiagnostics(value == "true");
+            }
         }
         else if(token == "isready") {
             std::cout << "readyok\n" << std::flush;
