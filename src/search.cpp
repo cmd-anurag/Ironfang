@@ -22,9 +22,25 @@ int selectiveDepth = 0;
 
 namespace {
 constexpr uint64_t TIME_CHECK_NODE_INTERVAL = 1024;
+std::array<std::array<Move, MAX_PLY>, MAX_PLY> pvTable{};
+std::array<int, MAX_PLY> pvLength{};
+std::array<std::vector<Move>, MAX_PLY> searchMoveBuffers;
 std::chrono::steady_clock::time_point hardSearchDeadline;
 bool hasHardSearchDeadline = false;
 bool searchStoppedByTime = false;
+
+void updatePrincipalVariation(int ply, const Move& move) {
+    if (ply < 0 || ply >= MAX_PLY - 1) {
+        return;
+    }
+
+    pvTable[ply][ply] = move;
+    const int childLength = std::min(pvLength[ply + 1], MAX_PLY);
+    for (int index = ply + 1; index < childLength; ++index) {
+        pvTable[ply][index] = pvTable[ply + 1][index];
+    }
+    pvLength[ply] = std::max(ply + 1, childLength);
+}
 
 bool checkSearchDeadline(bool force = false) {
     if (searchStoppedByTime) {
@@ -58,6 +74,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     betaCutoffCount = 0;
     firstMoveCutoffCount = 0;
     selectiveDepth = 0;
+    pvLength.fill(0);
     historyHeuristics = {};
     TT.lookupCount = 0;
     TT.hitCount = 0;
@@ -141,6 +158,10 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
         }
     }
     if (!hasLegalRootMove) return Move{NONE, -1, -1};
+
+    std::array<Move, MAX_PLY> bestPV{};
+    int bestPVLength = 1;
+    bestPV[0] = bestMove;
     
     // ------------------------------------------------------------------------------------
     //                          ITERATIVE DEEPENING SEARCH
@@ -173,6 +194,8 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
         int beta = INF;
         int iterationBestScore = -INF;
         Move iterationBestMove = bestMove; // Start with previous best
+        std::array<Move, MAX_PLY> iterationPV{};
+        int iterationPVLength = 0;
         
         // Move ordering: start with previous best move
         // std::vector<Move> orderedMoves = moves;
@@ -234,6 +257,12 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
             if (score > iterationBestScore) {
                 iterationBestScore = score;
                 iterationBestMove = move;
+                iterationPV[0] = move;
+                const int continuationLength = std::min(pvLength[0], MAX_PLY - 1);
+                for (int index = 0; index < continuationLength; ++index) {
+                    iterationPV[index + 1] = pvTable[0][index];
+                }
+                iterationPVLength = continuationLength + 1;
                 
                 if (score > alpha) {
                     alpha = score;
@@ -245,6 +274,8 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
         // Only update bestMove if we completed the iteration
         bestMove = iterationBestMove;
         bestScore = iterationBestScore;
+        bestPV = iterationPV;
+        bestPVLength = iterationPVLength;
 
         int hashFull = TT.hashfull();
 
@@ -271,8 +302,11 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
             std::cout << "cp " << bestScore;
         }
         std::cout << " nodes " << nodeCount << " hashfull " << hashFull
-                  << " nps " << nps
-                  << " pv " << moveToUCI(bestMove) << "\n" << std::flush;
+                  << " nps " << nps << " pv";
+        for (int index = 0; index < bestPVLength; ++index) {
+            std::cout << ' ' << moveToUCI(bestPV[index]);
+        }
+        std::cout << "\n" << std::flush;
     }
 
     emitSearchStats();
@@ -282,6 +316,9 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
 int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, int ply) {
     ++nodeCount; // an efficiency metric
     selectiveDepth = std::max(selectiveDepth, ply + 1);
+    if (ply < MAX_PLY) {
+        pvLength[ply] = ply;
+    }
 
     if (checkSearchDeadline()) {
         return 0;
@@ -381,7 +418,8 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
 
     
 
-    std::vector<Move> moves = board.generateMoves();
+    std::vector<Move>& moves = searchMoveBuffers[ply];
+    board.generateMoves(moves);
     if (moves.empty()) {
         // No pseudo‐legal moves at all → either checkmate or stalemate
         int kingSq = (board.sideToMove == WHITE)
@@ -491,6 +529,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         if (score >= beta) {
             ++betaCutoffCount;
             if (moveIndex == 1) ++firstMoveCutoffCount;
+            updatePrincipalVariation(ply, move);
         
             // record KILLER moves here (nice name)
             if(!move.capture && depth <= MAX_DEPTH && !(move == killerMoves[depth][0])) {
@@ -509,6 +548,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         if (score > alpha) {
             alpha = score;
             bestMove = move;
+            updatePrincipalVariation(ply, move);
             if (!move.capture && depth > 0 && depth <= MAX_DEPTH) {
                 int& history = historyHeuristics[move.from][move.to];
                 history = std::min(100000, history + depth * depth);
@@ -549,6 +589,9 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
     ++nodeCount;
     ++quiescenceNodeCount;
     selectiveDepth = std::max(selectiveDepth, ply + 1);
+    if (ply < MAX_PLY) {
+        pvLength[ply] = ply;
+    }
 
     if (checkSearchDeadline()) {
         return 0;
@@ -602,9 +645,12 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
 
     // Search a small number of quiet checks too. Captures alone can miss forcing
     // checking sequences and mating attacks at the horizon.
-    std::vector<Move> captures = (inCheck || qdepth < 2)
-        ? board.generateMoves()
-        : board.generateCaptures();
+    std::vector<Move>& captures = searchMoveBuffers[ply];
+    if (inCheck || qdepth < 2) {
+        board.generateMoves(captures);
+    } else {
+        board.generateCaptures(captures);
+    }
 
 
     for(Move &move : captures) {
@@ -668,6 +714,7 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
         
         if (score >= beta) {
             // Store lower bound in TT
+            updatePrincipalVariation(ply, move);
             TT.store(board.zobristKey, -qdepth, scoreToTT(beta, ply), TT_LOWER, move);
             if (board.pathDepth > 0) --board.pathDepth;
             return beta;
@@ -676,6 +723,7 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
         if (score > alpha) {
             alpha = score;
             bestMove = move;
+            updatePrincipalVariation(ply, move);
         }
     }
 

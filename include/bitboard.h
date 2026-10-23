@@ -66,7 +66,9 @@ class BitBoard {
         }
         bool setPositionFromFEN(const std::string& fen);
         std::vector<Move> generateMoves() const;
+        void generateMoves(std::vector<Move>& moves) const;
         std::vector<Move> generateCaptures() const;
+        void generateCaptures(std::vector<Move>& captures) const;
         
         bool isSquareAttacked(int square, Color opponentColor) const;
         bool isSquareAttacked(int square, Color opponentColor, uint64_t occupied) const;

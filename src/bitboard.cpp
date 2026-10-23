@@ -172,6 +172,12 @@ bool BitBoard::isSquareAttacked(int square, Color opponentColor, uint64_t occupi
 
 std::vector<Move> BitBoard::generateMoves() const {
     std::vector<Move> moves;
+    generateMoves(moves);
+    return moves;
+}
+
+void BitBoard::generateMoves(std::vector<Move>& moves) const {
+    moves.clear();
     moves.reserve(218);
     
     uint64_t pieces = (sideToMove == WHITE) ? getWhitePieces() : getBlackPieces();
@@ -204,12 +210,18 @@ std::vector<Move> BitBoard::generateMoves() const {
         }
     }
     
-    return moves;
 }
 
 std::vector<Move> BitBoard::generateCaptures() const
 {
     std::vector<Move> captures;
+    generateCaptures(captures);
+    return captures;
+}
+
+void BitBoard::generateCaptures(std::vector<Move>& captures) const
+{
+    captures.clear();
     captures.reserve(36);
 
     Color color = sideToMove;
@@ -328,7 +340,6 @@ std::vector<Move> BitBoard::generateCaptures() const
                 break;
         }
     }
-    return captures;
 }
 
 void BitBoard::generatePawnMoves(int square, std::vector<Move>& moves, Piece p, Color color) const {
