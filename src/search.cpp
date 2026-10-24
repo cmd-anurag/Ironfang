@@ -418,8 +418,13 @@ void generateReferenceMoves(const BitBoard& board, std::vector<Move>& moves,
                     (opponent == WHITE ? board.getWhiteRooks() : board.getBlackRooks()) |
                     (opponent == WHITE ? board.getWhiteQueens() : board.getBlackQueens());
                 if (enemyOrthogonal) {
-                    const uint64_t blockers = allPieces &
-                        ~((1ULL << capturedPawnSquare) | (1ULL << from) | (1ULL << target));
+                    // Model occupancy after en passant: remove both pawns
+                    // from their source squares, then occupy the EP target.
+                    // The target is empty before the move, so it must be added
+                    // as a blocker for the discovered-rook check.
+                    const uint64_t blockers =
+                        (allPieces & ~((1ULL << capturedPawnSquare) | (1ULL << from))) |
+                        (1ULL << target);
                     const uint64_t rookAttacks = board.getRookAttacks(kingSquare, blockers);
                     if (rookAttacks & enemyOrthogonal) continue;
                 }
@@ -780,10 +785,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
             for (size_t rootMoveIndex = 0; rootMoveIndex < moves.size(); ++rootMoveIndex) {
                 const Move& move = moves[rootMoveIndex];
                 const Gamestate prevdata = saveGameState(board);
-
-                if (!board.makeMove(move)) {
-                    continue;
-                }
+                board.makeLegalMove(move);
 
                 int rootExtension = 0;
                 if (MAX_EXTENSIONS > 0) {
@@ -982,9 +984,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     for (size_t moveIndex = 0; moveIndex < moves.size(); ++moveIndex) {
         const Move& move = moves[moveIndex];
         const Gamestate prevdata = saveGameState(board);
-        if (!board.makeMove(move)) {
-            continue;
-        }
+        board.makeLegalMove(move);
 
         int extension = 0;
         if (numExtensions < MAX_EXTENSIONS) {
@@ -1073,8 +1073,7 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int ply) {
 
     for (const Move& move : moves) {
         const Gamestate previousState = saveGameState(board);
-
-        if (!board.makeMove(move)) continue;
+        board.makeLegalMove(move);
         const int score = -quiescenceSearch(board, -beta, -alpha, ply + 1);
         board.unmakeMove(move, previousState);
 

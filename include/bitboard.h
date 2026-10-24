@@ -64,6 +64,9 @@ class BitBoard {
         bool isSquareAttacked(int square, Color opponentColor, uint64_t occupied) const;
 
         bool makeMove(const Move &move);
+        // Applies a move produced by the search's legal move generator.
+        // Unlike makeMove(), this skips the redundant post-move king-safety check.
+        void makeLegalMove(const Move &move);
         void unmakeMove(const Move &move, const Gamestate &prevState);
         bool tryMove(const Move& move);
         
@@ -135,23 +138,28 @@ class BitBoard {
         uint64_t whiteKnights, blackKnights;
         uint64_t whiteKing, blackKing;
 
+        bool applyMove(const Move &move, bool validateKingSafety);
+
         
         
         inline void clearSquare(int square) {
-            uint64_t mask = ~(1ULL << square);
+            const uint64_t mask = ~(1ULL << square);
+            switch (squareContents[square]) {
+                case WP: whitePawns &= mask; break;
+                case BP: blackPawns &= mask; break;
+                case WR: whiteRooks &= mask; break;
+                case BR: blackRooks &= mask; break;
+                case WB: whiteBishops &= mask; break;
+                case BB: blackBishops &= mask; break;
+                case WQ: whiteQueens &= mask; break;
+                case BQ: blackQueens &= mask; break;
+                case WN: whiteKnights &= mask; break;
+                case BN: blackKnights &= mask; break;
+                case WK: whiteKing &= mask; break;
+                case BK: blackKing &= mask; break;
+                case NONE: break;
+            }
             squareContents[square] = NONE;
-            whitePawns &= mask;
-            blackPawns &= mask;
-            whiteRooks &= mask;
-            blackRooks &= mask;
-            whiteBishops &= mask;
-            blackBishops &= mask;
-            whiteQueens &= mask;
-            blackQueens &= mask;
-            whiteKnights &= mask;
-            blackKnights &= mask;
-            whiteKing &= mask;
-            blackKing &= mask;
         }
 
         void generatePawnMoves(int square, std::vector<Move>& moves, Piece p, Color color) const;

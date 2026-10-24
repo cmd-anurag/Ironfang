@@ -553,6 +553,17 @@ void BitBoard::generateKingMoves(int square, std::vector<Move>& moves, Piece p, 
 }
 
 bool BitBoard::makeMove(const Move &move) {
+    return applyMove(move, true);
+}
+
+void BitBoard::makeLegalMove(const Move &move) {
+    // The search move generator already filters pins, checks, king attacks,
+    // and castling paths. Match the reference engine's search path by applying
+    // those moves directly rather than checking king safety a second time.
+    (void)applyMove(move, false);
+}
+
+bool BitBoard::applyMove(const Move &move, bool validateKingSafety) {
     Gamestate prevState = {
         sideToMove, 
         enPassantSquare,
@@ -737,18 +748,19 @@ bool BitBoard::makeMove(const Move &move) {
     zobristKey ^= zobristBlackToMove;
 
 
-    if(sideToMove == BLACK) {
-        if(isSquareAttacked(whiteKingSquare, BLACK)){
-            unmakeMove(move, prevState);
-            return false;
+    if (validateKingSafety) {
+        if (sideToMove == BLACK) {
+            if (isSquareAttacked(whiteKingSquare, BLACK)) {
+                unmakeMove(move, prevState);
+                return false;
+            }
+        } else {
+            if (isSquareAttacked(blackKingSquare, WHITE)) {
+                unmakeMove(move, prevState);
+                return false;
+            }
         }
     }
-    else {
-        if(isSquareAttacked(blackKingSquare, WHITE)) {
-            unmakeMove(move, prevState);
-            return false;
-        }
-    } 
 
     if (move.piece == WP || move.piece == BP || move.capture || move.isEnPassant) {
         halfmoveClock = 0;
