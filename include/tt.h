@@ -19,10 +19,9 @@ struct TTEntry {
 
 static_assert(sizeof(TTEntry) == 16, "TT entries should stay compact");
 
-// Use a 128 MiB budget with compact 16-byte entries.
-constexpr size_t TT_SIZE = (128ULL * 1024 * 1024) / sizeof(TTEntry);
-constexpr size_t TT_MASK = TT_SIZE - 1;
-static_assert((TT_SIZE & TT_MASK) == 0, "TT_SIZE must be a power of two");
+// Match the reference's 64 MiB direct-mapped table. With 16-byte entries this
+// yields exactly 4,194,304 slots; indexing uses modulo, as in the reference.
+constexpr size_t TT_SIZE = (64ULL * 1024 * 1024) / sizeof(TTEntry);
 
 class TranspositionTable {
     public:

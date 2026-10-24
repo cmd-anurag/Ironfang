@@ -1,6 +1,7 @@
 #include "tt.h"
 #include <cstring>
 #include <algorithm>
+#include <cstdlib>
 
 namespace {
 constexpr uint16_t INVALID_PACKED_MOVE = 0xFFFF;
@@ -10,8 +11,24 @@ uint16_t packMove(const Move &move)
     if (move.from < 0 || move.from >= 64 || move.to < 0 || move.to >= 64)
         return INVALID_PACKED_MOVE;
 
-    const uint16_t promotionType = static_cast<uint16_t>(move.promotion & 7);
-    return static_cast<uint16_t>(move.from | (move.to << 6) | (promotionType << 12));
+    int flag = 0;
+    if (move.isEnPassant) {
+        flag = 1;
+    } else if (move.isKingSideCastle || move.isQueenSideCastle) {
+        flag = 2;
+    } else if ((move.promotion & 7) == 5) {
+        flag = 4;
+    } else if ((move.promotion & 7) == 2) {
+        flag = 5;
+    } else if ((move.promotion & 7) == 4) {
+        flag = 6;
+    } else if ((move.promotion & 7) == 3) {
+        flag = 7;
+    } else if ((move.piece & 7) == 1 && std::abs(move.to - move.from) == 16) {
+        flag = 3;
+    }
+
+    return static_cast<uint16_t>(move.from | (move.to << 6) | (flag << 12));
 }
 
 Move unpackMove(uint16_t packedMove)
@@ -21,10 +38,18 @@ Move unpackMove(uint16_t packedMove)
 
     const int from = packedMove & 0x3F;
     const int to = (packedMove >> 6) & 0x3F;
-    const int promotionType = (packedMove >> 12) & 0x07;
-    // The caller uses this only as a hash-move hint. Piece and capture data are
-    // already present in the generated move and are not needed for matching.
-    return Move(NONE, from, to, promotionType);
+    const int flag = (packedMove >> 12) & 0x0F;
+    int promotionType = 0;
+    if (flag == 4) promotionType = 5;
+    else if (flag == 5) promotionType = 2;
+    else if (flag == 6) promotionType = 4;
+    else if (flag == 7) promotionType = 3;
+    const bool enPassant = flag == 1;
+    const bool kingSideCastle = flag == 2 && to > from;
+    const bool queenSideCastle = flag == 2 && to < from;
+    // Hash moves are hints only, so the piece/capture fields are unnecessary.
+    return Move(NONE, from, to, promotionType, 0, kingSideCastle,
+                queenSideCastle, enPassant);
 }
 
 TT_FLAG storedFlag(const TTEntry &entry)
@@ -44,7 +69,7 @@ bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int be
 {
     ++lookupCount;
 
-    size_t index = zobristKey & TT_MASK;
+    size_t index = static_cast<size_t>(zobristKey % TT_SIZE);
     TTEntry &entry = table[index];
 
     // Match the reference's hash-move hint behavior: move ordering may use
@@ -61,9 +86,9 @@ bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int be
             // independent of the path that first reached this position.
             // Restore the current path's score before comparing alpha/beta.
             int eval = entry.eval;
-            constexpr int mateThreshold = 800000;
-            if (eval >= mateThreshold) eval -= ply;
-            else if (eval <= -mateThreshold) eval += ply;
+            constexpr int mateThreshold = 99000;
+            if (eval > mateThreshold) eval -= ply;
+            else if (eval < -mateThreshold) eval += ply;
 
             switch(storedFlag(entry)) {
                 case TT_EXACT:
@@ -96,7 +121,7 @@ void TranspositionTable::store(uint64_t zobristKey, int depth, int eval,
                                TT_FLAG flag, const Move &bestMove)
 {
     ++totalStoreAttempts;
-    size_t index = zobristKey & TT_MASK;
+    size_t index = static_cast<size_t>(zobristKey % TT_SIZE);
     TTEntry &entry = table[index];
 
     // The reference replaces the indexed entry on every store. Its TT is
@@ -107,7 +132,7 @@ void TranspositionTable::store(uint64_t zobristKey, int depth, int eval,
         ++overwritten;
 
     entry.key = zobristKey;
-    entry.depth = static_cast<uint8_t>(std::clamp(depth, 0, 255));
+    entry.depth = static_cast<uint8_t>(depth);
     entry.eval = eval;
     entry.packedMove = packMove(bestMove);
     entry.flag = static_cast<uint8_t>(flag);

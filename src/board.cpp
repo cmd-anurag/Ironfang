@@ -257,7 +257,7 @@ bool Board::makeMove(const Move &move) {
 
     if(enPassantSquare != -1) {
         int file = enPassantSquare % 8;
-        zobristKey ^= zobristEnPassant[file];
+        zobristKey ^= zobristEnPassant[file + 1];
     }
     enPassantSquare = -1;
     
@@ -361,7 +361,7 @@ bool Board::makeMove(const Move &move) {
                 enPassantSquare = move.from + (sideToMove == WHITE? -8 : 8);
                 // zobrist changes
                 int file = enPassantSquare % 8;
-                zobristKey ^= zobristEnPassant[file];
+                zobristKey ^= zobristEnPassant[file + 1];
             }
 
             if(move.promotion) {
@@ -430,10 +430,16 @@ bool Board::makeMove(const Move &move) {
     }
 
     // zobrist changes
-    if(prevState.whiteKingsideCastle != whiteKingsideCastle) zobristKey ^= zobristCastling[0];
-    if(prevState.whiteQueensideCastle != whiteQueensideCastle) zobristKey ^= zobristCastling[1];
-    if(prevState.blackKingsideCastle != blackKingsideCastle) zobristKey ^= zobristCastling[2];
-    if(prevState.blackQueensideCastle != blackQueensideCastle) zobristKey ^= zobristCastling[3];
+    const int previousCastling = castlingRightsIndex(
+        prevState.whiteKingsideCastle, prevState.whiteQueensideCastle,
+        prevState.blackKingsideCastle, prevState.blackQueensideCastle);
+    const int currentCastling = castlingRightsIndex(
+        whiteKingsideCastle, whiteQueensideCastle,
+        blackKingsideCastle, blackQueensideCastle);
+    if (previousCastling != currentCastling) {
+        zobristKey ^= zobristCastling[previousCastling];
+        zobristKey ^= zobristCastling[currentCastling];
+    }
 
     sideToMove = (sideToMove == WHITE)? BLACK : WHITE;
     zobristKey ^= zobristBlackToMove;

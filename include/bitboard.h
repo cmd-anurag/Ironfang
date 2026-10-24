@@ -4,6 +4,7 @@
 #include "types.h"
 #include "Gamestate.h"
 #include "move.h"
+#include <array>
 #include <vector>
 #include <cstdint>
 
@@ -31,20 +32,7 @@ class BitBoard {
         void setStartPosition();
         void print() const;
         inline Piece getPiece(int square) const {
-            uint64_t mask = 1ULL << square;
-            if (whitePawns & mask) return WP;
-            if (blackPawns & mask) return BP;
-            if (whiteRooks & mask) return WR;
-            if (blackRooks & mask) return BR;
-            if (whiteBishops & mask) return WB;
-            if (blackBishops & mask) return BB;
-            if (whiteQueens & mask) return WQ;
-            if (blackQueens & mask) return BQ;
-            if (whiteKnights & mask) return WN;
-            if (blackKnights & mask) return BN;
-            if (whiteKing & mask) return WK;
-            if (blackKing & mask) return BK;
-            return NONE;
+            return squareContents[square];
         }
         inline void setPiece(Piece p, int square) {
             uint64_t mask = 1ULL << square;
@@ -64,6 +52,7 @@ class BitBoard {
                 case BK: blackKing |= mask; break;
                 default: break;
             }
+            squareContents[square] = p;
         }
         bool setPositionFromFEN(const std::string& fen);
         std::vector<Move> generateMoves() const;
@@ -136,6 +125,9 @@ class BitBoard {
         
 
     private:
+        // Cached square lookup used by evaluation and attack/check detection.
+        // The piece bitboards remain authoritative for move generation.
+        std::array<Piece, 64> squareContents{};
         uint64_t whitePawns, blackPawns;
         uint64_t whiteRooks, blackRooks;
         uint64_t whiteBishops, blackBishops;
@@ -147,6 +139,7 @@ class BitBoard {
         
         inline void clearSquare(int square) {
             uint64_t mask = ~(1ULL << square);
+            squareContents[square] = NONE;
             whitePawns &= mask;
             blackPawns &= mask;
             whiteRooks &= mask;

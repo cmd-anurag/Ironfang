@@ -5,8 +5,11 @@
 #include <cstdlib> 
 #include <ctime>
 #include <algorithm>
+#include <cmath>
+#include <thread>
 #include "bitboard.h"
 #include "search.h"
+#include "opening_book.h"
 
 // bro why does c++ not have a built in trim function lol
 std::string trim(const std::string& s) {
@@ -17,6 +20,11 @@ std::string trim(const std::string& s) {
 
 namespace {
 constexpr int MAX_GAME_REPETITION_HISTORY = 1024 - MAX_PLY - 1;
+
+void printUciLine(const std::string& line) {
+    std::lock_guard<std::mutex> outputLock(uciOutputMutex);
+    std::cout << line << '\n' << std::flush;
+}
 
 void recordGamePosition(BitBoard& board, bool irreversible) {
     // A pawn move or capture makes all earlier positions unreachable under
@@ -46,11 +54,21 @@ bool applyUciMoveAndRecord(BitBoard& board, const std::string& moveText) {
 
 void uciLoop() {
     srand(time(NULL));
+    OpeningBook::initialize();
     std::string line;
     BitBoard board;
 
     std::vector<std::string> lastUCIMoves;
     std::string lastFEN;
+    int gamePly = 0;
+    std::thread searchThread;
+
+    auto stopAndJoinSearch = [&]() {
+        if (searchThread.joinable()) {
+            Search::requestStop();
+            searchThread.join();
+        }
+    };
 
     while(std::getline(std::cin, line)) {
         std::istringstream iss(line);
@@ -58,12 +76,13 @@ void uciLoop() {
         iss >> token;
 
         if(token == "uci") {
-            std::cout << "id name Ironfangv17\n" << std::flush;
-            std::cout << "id author dark\n" << std::flush;
-            std::cout << "option name RootDiagnostics type check default false\n" << std::flush;
-            std::cout << "uciok\n" << std::flush;
+            printUciLine("id name Ironfangv18");
+            printUciLine("id author dark");
+            printUciLine("option name RootDiagnostics type check default false");
+            printUciLine("uciok");
         }
         else if (token == "setoption") {
+            stopAndJoinSearch();
             std::string nameToken;
             std::string optionName;
             std::string valueToken;
@@ -75,21 +94,25 @@ void uciLoop() {
             }
         }
         else if(token == "isready") {
-            std::cout << "readyok\n" << std::flush;
+            printUciLine("readyok");
         }
         else if(token == "ucinewgame") {
+            stopAndJoinSearch();
             board.setStartPosition();
             lastFEN.clear();
             lastUCIMoves.clear();
+            gamePly = 0;
             Search::newGame();
         }
         else if (token == "position") {
+            stopAndJoinSearch();
             std::string sub;
             iss >> sub;
 
             std::string currentFEN;
             std::vector<std::string> currentUCIMoves;
             bool movesAlreadyParsed = false;
+            int currentGamePlyBase = 0;
 
             if(sub == "startpos") {
                 currentFEN = "startpos";
@@ -108,6 +131,13 @@ void uciLoop() {
                     }
                     if (clockFields++ < 2) currentFEN += " " + trailing;
                 }
+                std::istringstream fenFields(currentFEN);
+                std::string fenPlacement, fenActive, fenCastling, fenEnPassant;
+                int halfmoveClock = 0;
+                int fullmoveNumber = 0;
+                fenFields >> fenPlacement >> fenActive >> fenCastling >> fenEnPassant;
+                fenFields >> halfmoveClock >> fullmoveNumber;
+                currentGamePlyBase = (fullmoveNumber - 1) * 2 + (fenActive == "b" ? 1 : 0);
                 if (movesAlreadyParsed) {
                     while (iss >> trailing) currentUCIMoves.push_back(trailing);
                 }
@@ -150,7 +180,7 @@ void uciLoop() {
                 }
                 else { // sub == "fen"
                     if (!board.setPositionFromFEN(currentFEN)) {
-                        std::cout << "info string invalid FEN position\n" << std::flush;
+                        printUciLine("info string invalid FEN position");
                         board.setStartPosition();
                         lastFEN.clear();
                         lastUCIMoves.clear();
@@ -171,14 +201,15 @@ void uciLoop() {
             // “new baseline” for the next UCI command:
             lastFEN = currentFEN;
             lastUCIMoves = currentUCIMoves;
+            gamePly = currentGamePlyBase + static_cast<int>(currentUCIMoves.size());
         }
 
         else if(token == "go") {
+            stopAndJoinSearch();
             int movetime = -1;
             int requestedDepth = -1;
             int wtime = -1, btime = -1;
             int winc = 0, binc = 0;
-            int movestogo = 0; // Zero means the GUI did not provide a move horizon.
             
             std::string subtoken;
             while (iss >> subtoken) {
@@ -200,82 +231,58 @@ void uciLoop() {
                 else if (subtoken == "binc") {
                     iss >> binc;
                 }
-                else if (subtoken == "movestogo") {
-                    iss >> movestogo;
-                }
             }
             
-            // Enhanced time allocation
+            // Match the reference's fixed time allocation: 1/40 of remaining
+            // time plus 80% of the increment, with a 50 ms minimum.
             int timeForMove = -1;
             
-            if (movetime > 0) {
+            if (movetime >= 0) {
                 timeForMove = movetime;
             }
-            else if ((board.sideToMove == WHITE && wtime > 0) || 
-                     (board.sideToMove == BLACK && btime > 0)) {
+            else if ((board.sideToMove == WHITE && wtime >= 0) ||
+                     (board.sideToMove == BLACK && btime >= 0)) {
                 
                 int timeLeft = (board.sideToMove == WHITE) ? wtime : btime;
                 int increment = (board.sideToMove == WHITE) ? winc : binc;
-                int pieceCount = 0;
-                
-                // Use a stage-dependent horizon only when the GUI omitted one.
-                // Assuming 30 moves for every game overallocates early moves
-                // in increment controls such as 1+1 bullet.
-                if (movestogo > 0) {
-                    timeForMove = (timeLeft / movestogo) + (increment * 3) / 4;
-                } else {
-                    uint64_t allPieces = board.getAllPieces();
-                    pieceCount = __builtin_popcountll(allPieces);
-                    
-                    int estimatedMoves;
-                    if (pieceCount > 24) {
-                        estimatedMoves = 40;
-                    } else if (pieceCount > 12) {
-                        estimatedMoves = 28;
-                    } else {
-                        estimatedMoves = 18;
-                    }
-
-                    // Reserve part of the increment so one difficult move does
-                    // not make the remaining bullet clock unsustainable.
-                    timeForMove = (timeLeft / estimatedMoves) + (increment * 3) / 4;
-                }
-                
-                // More aggressive safety margin - allow up to 25% of remaining time (was ~14%)
-                timeForMove = std::min(timeForMove, timeLeft / 4);
-                if (timeLeft > 0) timeForMove = std::max(1, timeForMove);
-                
-                
+                double plannedTime = timeLeft / 40.0;
+                if (timeLeft > increment * 2) plannedTime += increment * 0.8;
+                const double minimumThinkTime = std::min(50.0, timeLeft * 0.25);
+                timeForMove = static_cast<int>(std::ceil(std::max(minimumThinkTime, plannedTime)));
 
             }
-            
-            // Set a dynamic maximum depth based on time
             int maxDepth = requestedDepth > 0 ? std::min(requestedDepth, MAX_DEPTH) : MAX_DEPTH;
-            if (requestedDepth <= 0) {
-                if (timeForMove > 0 && timeForMove < 100) {
-                    maxDepth = 6;
-                } else if (timeForMove > 0 && timeForMove < 500) {
-                    maxDepth = 8;
-                }
+
+            const std::string bookMove = OpeningBook::chooseMove(board, gamePly);
+            if (!bookMove.empty()) {
+                printUciLine("bestmove " + bookMove);
+                continue;
             }
             
             // Log intentions
             // std::cout << "info string Starting search with time=" << timeForMove 
             //           << "ms maxDepth=" << maxDepth << "\n" << std::flush;
             
-            try {
-                
-                Move bestMove = Search::findBestMove(board, maxDepth, timeForMove);
-                
-                std::cout << "bestmove " << moveToUCI(bestMove) << "\n" << std::flush;
-            }
-            catch (...) {
-                std::cout << "info string search failed\n" << std::flush;
-                std::cout << "bestmove 0000\n" << std::flush;
-            }
+            Search::clearStopRequest();
+            searchThread = std::thread([&board, maxDepth, timeForMove]() {
+                try {
+                    const Move bestMove = Search::findBestMove(board, maxDepth, timeForMove);
+                    printUciLine("bestmove " + moveToUCI(bestMove));
+                }
+                catch (...) {
+                    printUciLine("info string search failed");
+                    printUciLine("bestmove 0000");
+                }
+            });
+        }
+        else if (token == "stop") {
+            stopAndJoinSearch();
         }
         else if (token == "quit") {
+            stopAndJoinSearch();
             break;
         }
     }
+
+    stopAndJoinSearch();
 }

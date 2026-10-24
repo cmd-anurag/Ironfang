@@ -99,6 +99,23 @@ void BitBoard::setStartPosition() {
     blackKing = 0x0000000000000010ULL;     // e8
     blackPawns = 0x000000000000FF00ULL;    // rank 7
 
+    squareContents.fill(NONE);
+    const auto cachePieces = [this](uint64_t pieces, Piece piece) {
+        while (pieces) squareContents[popLSB(pieces)] = piece;
+    };
+    cachePieces(whitePawns, WP);
+    cachePieces(blackPawns, BP);
+    cachePieces(whiteRooks, WR);
+    cachePieces(blackRooks, BR);
+    cachePieces(whiteBishops, WB);
+    cachePieces(blackBishops, BB);
+    cachePieces(whiteQueens, WQ);
+    cachePieces(blackQueens, BQ);
+    cachePieces(whiteKnights, WN);
+    cachePieces(blackKnights, BN);
+    cachePieces(whiteKing, WK);
+    cachePieces(blackKing, BK);
+
     sideToMove = WHITE;
     enPassantSquare = -1;
     halfmoveClock = 0;
@@ -550,7 +567,7 @@ bool BitBoard::makeMove(const Move &move) {
     };
 
     if(enPassantSquare != -1) {
-        int file = enPassantSquare & 7;
+        int file = (enPassantSquare & 7) + 1;
         zobristKey ^= zobristEnPassant[file];
     }
     enPassantSquare = -1;
@@ -639,7 +656,7 @@ bool BitBoard::makeMove(const Move &move) {
             if(abs(move.from - move.to) == 16) {
                 enPassantSquare = move.from + (sideToMove == WHITE? -8 : 8);
                 // zobrist changes
-                int file = enPassantSquare & 7;
+                int file = (enPassantSquare & 7) + 1;
                 zobristKey ^= zobristEnPassant[file];
             }
 
@@ -704,11 +721,17 @@ bool BitBoard::makeMove(const Move &move) {
         }
     }
 
-    // zobrist changes
-    if(prevState.whiteKingsideCastle != whiteKingsideCastle) zobristKey ^= zobristCastling[0];
-    if(prevState.whiteQueensideCastle != whiteQueensideCastle) zobristKey ^= zobristCastling[1];
-    if(prevState.blackKingsideCastle != blackKingsideCastle) zobristKey ^= zobristCastling[2];
-    if(prevState.blackQueensideCastle != blackQueensideCastle) zobristKey ^= zobristCastling[3];
+    // The reference hashes the complete castling-rights state with one key.
+    const int previousCastling = castlingRightsIndex(
+        prevState.whiteKingsideCastle, prevState.whiteQueensideCastle,
+        prevState.blackKingsideCastle, prevState.blackQueensideCastle);
+    const int currentCastling = castlingRightsIndex(
+        whiteKingsideCastle, whiteQueensideCastle,
+        blackKingsideCastle, blackQueensideCastle);
+    if (previousCastling != currentCastling) {
+        zobristKey ^= zobristCastling[previousCastling];
+        zobristKey ^= zobristCastling[currentCastling];
+    }
 
     sideToMove = (sideToMove == WHITE)? BLACK : WHITE;
     zobristKey ^= zobristBlackToMove;
@@ -843,6 +866,7 @@ bool BitBoard::setPositionFromFEN(const std::string& fen) {
     whitePawns = blackPawns = whiteRooks = blackRooks = 0;
     whiteBishops = blackBishops = whiteQueens = blackQueens = 0;
     whiteKnights = blackKnights = whiteKing = blackKing = 0;
+    squareContents.fill(NONE);
     int rank = 0, file = 0, whiteKings = 0, blackKings = 0;
     for (char c : placement) {
         if (c == '/') {
