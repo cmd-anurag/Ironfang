@@ -49,6 +49,7 @@ FIELDS = [
     "lmr_researches",
     "lmr_check_exemptions",
     "root_pvs_researches",
+    "repetition_scan_entries",
 ]
 
 

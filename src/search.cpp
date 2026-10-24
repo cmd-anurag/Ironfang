@@ -37,6 +37,7 @@ bool searchStoppedByTime = false;
 bool rootDiagnosticsEnabled = false;
 uint64_t lateMoveReductionCount = 0;
 uint64_t lateMoveResearchCount = 0;
+uint64_t repetitionPathEntriesScanned = 0;
 
 int squareForPieceSquareTable(Piece piece, int square) {
     return (piece & 7) == 0 || piece == NONE
@@ -47,6 +48,23 @@ int squareForPieceSquareTable(Piece piece, int square) {
 bool matchesHashMove(const Move& move, const Move& hashMove) {
     return hashMove.from >= 0 && move.from == hashMove.from &&
         move.to == hashMove.to && (move.promotion & 7) == (hashMove.promotion & 7);
+}
+
+int countCurrentRepetitionOccurrences(const BitBoard& board) {
+    // A pawn move or capture makes every earlier position unreachable, and
+    // Zobrist identity includes side to move. Only inspect same-side positions
+    // within the reversible-move window instead of rescanning the full game.
+    const int currentIndex = board.pathDepth - 1;
+    const int earliestRelevantIndex = std::max(0, currentIndex - board.halfmoveClock);
+    int occurrences = 0;
+    for (int index = currentIndex; index >= earliestRelevantIndex; index -= 2) {
+        ++repetitionPathEntriesScanned;
+        if (board.repetitionPath[index] == board.zobristKey) {
+            ++occurrences;
+            if (occurrences >= 3) break;
+        }
+    }
+    return occurrences;
 }
 
 struct AttackMaps {
@@ -271,6 +289,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     selectiveDepth = 0;
     lateMoveReductionCount = 0;
     lateMoveResearchCount = 0;
+    repetitionPathEntriesScanned = 0;
     pvLength.fill(0);
     historyHeuristics = {};
     TT.lookupCount = 0;
@@ -300,7 +319,8 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
                   << " ab_cutoffs=" << betaCutoffCount
                   << " first_move_cutoffs=" << firstMoveCutoffCount
                   << " lmr_reductions=" << lateMoveReductionCount
-                  << " lmr_researches=" << lateMoveResearchCount;
+                  << " lmr_researches=" << lateMoveResearchCount
+                  << " repetition_scan_entries=" << repetitionPathEntriesScanned;
         if (searchStoppedByTime) {
             std::cout << " stop=hard_time";
         }
@@ -390,7 +410,10 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
         if (rootHashMove.from < 0) rootHashMove = bestMove;
         orderMoves(board, moves, rootHashMove, false, 0);
 
-        
+        // The generator includes pseudo-legal moves; reductions should be
+        // counted over successfully made (legal) moves, like the reference's
+        // legal move list.
+        size_t legalRootMoveCount = 0;
         // Match the reference's full alpha-beta root search. The root window
         // narrows as alpha improves; it does not use a separate PVS probe.
         for (size_t rootMoveIndex = 0; rootMoveIndex < moves.size(); ++rootMoveIndex) {
@@ -411,6 +434,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
             if (!board.makeMove(move)) {
                 continue;
             }
+            const size_t legalRootMoveIndex = legalRootMoveCount++;
 
             int rootExtension = 0;
             if (MAX_EXTENSIONS > 0) {
@@ -430,7 +454,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
             int score;
             const bool isCapture = move.capture != NONE || move.isEnPassant;
             const bool reduceRootMove = !rootDiagnosticsEnabled && depth >= 3 &&
-                rootMoveIndex >= 3 && rootExtension == 0 && !isCapture;
+                legalRootMoveIndex >= 3 && rootExtension == 0 && !isCapture;
             if (reduceRootMove) {
                 ++lateMoveReductionCount;
                 score = -minimaxAlphaBeta(board, depth - 2, -alpha - 1, -alpha,
@@ -567,15 +591,10 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     board.repetitionPath[board.pathDepth++] = board.zobristKey;
     assert(board.pathDepth <= 1024);
 
-    int repetitionOccurrences = 0;
-    for (int i = 0; i < board.pathDepth; ++i) {
-        if (board.repetitionPath[i] == board.zobristKey) {
-            ++repetitionOccurrences;
-            if (repetitionOccurrences >= 3) {
-                --board.pathDepth;
-                return 0;
-            }
-        }
+    const int repetitionOccurrences = countCurrentRepetitionOccurrences(board);
+    if (repetitionOccurrences >= 3) {
+        --board.pathDepth;
+        return 0;
     }
 
     const int originalAlpha = alpha;
@@ -668,7 +687,8 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         }
 
         const bool isCapture = move.capture != NONE || move.isEnPassant;
-        const bool reduceMove = extension == 0 && depth >= 3 && moveIndex >= 3 &&
+        // legalMoveIndex excludes pseudo-legal moves rejected by makeMove.
+        const bool reduceMove = extension == 0 && depth >= 3 && legalMoveIndex >= 3 &&
             !isCapture;
 
         int score;
@@ -762,12 +782,10 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
     if (board.pathDepth >= 1024) return Evaluation::evaluate(board);
 
     board.repetitionPath[board.pathDepth++] = board.zobristKey;
-    int repetitionOccurrences = 0;
-    for (int i = 0; i < board.pathDepth; ++i) {
-        if (board.repetitionPath[i] == board.zobristKey && ++repetitionOccurrences >= 3) {
-            --board.pathDepth;
-            return 0;
-        }
+    const int repetitionOccurrences = countCurrentRepetitionOccurrences(board);
+    if (repetitionOccurrences >= 3) {
+        --board.pathDepth;
+        return 0;
     }
 
     int ruleScore;
