@@ -24,10 +24,10 @@ namespace {
 constexpr uint64_t TIME_CHECK_NODE_INTERVAL = 1024;
 constexpr uint64_t HALF_MOVE_TT_SALT = 0x9e3779b97f4a7c15ULL;
 constexpr int HASH_MOVE_SCORE = 100000000;
-constexpr int WINNING_CAPTURE_BIAS = 2000000;
-constexpr int LOSING_CAPTURE_PENALTY = 1200000;
-constexpr int PROMOTION_BIAS = 4000000;
-constexpr int KILLER_MOVE_BIAS = 1500000;
+constexpr int WINNING_CAPTURE_BIAS = 8000000;
+constexpr int LOSING_CAPTURE_BIAS = 2000000;
+constexpr int PROMOTION_BIAS = 6000000;
+constexpr int KILLER_MOVE_BIAS = 4000000;
 constexpr int MAX_QUIESCENCE_PLY = 32;
 std::array<std::array<Move, MAX_PLY>, MAX_PLY> pvTable{};
 std::array<int, MAX_PLY> pvLength{};
@@ -94,16 +94,21 @@ void orderMoves(BitBoard& board, std::vector<Move>& moves, const Move& hashMove,
                 : static_cast<Piece>(move.capture);
             const int capturedType = capturedPiece & 7;
             const int captureDelta = Evaluation::pieceValue[capturedType] - movingValue;
-            // Captures are ordered MVV-LVA style. A targeted attack query is
-            // much cheaper than rebuilding every enemy attack map at every
-            // node, and helps defer obviously losing captures.
+            // Keep the reference's capture tiers: good captures before quiet
+            // promotions, and losing captures behind killer moves. The old
+            // scores put every capture below promotions, even when the capture
+            // won material, which can delay critical tactical lines.
             const bool attacked = board.isSquareAttacked(move.to, opponent);
-            score += WINNING_CAPTURE_BIAS + capturedType * 1000 - movingType * 100;
-            if (attacked && captureDelta < 0) score -= LOSING_CAPTURE_PENALTY;
+            if (attacked) {
+                score += (captureDelta >= 0 ? WINNING_CAPTURE_BIAS : LOSING_CAPTURE_BIAS) +
+                         captureDelta;
+            } else {
+                score += WINNING_CAPTURE_BIAS + captureDelta;
+            }
         }
 
         if (movingType == 1) {
-            if (move.promotion)
+            if (!isCapture && (move.promotion & 7) == 5)
                 score += PROMOTION_BIAS + Evaluation::pieceValue[move.promotion & 7] -
                          Evaluation::pieceValue[1];
         } else if (movingType != 6) {
