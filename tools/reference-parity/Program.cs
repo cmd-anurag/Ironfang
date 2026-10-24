@@ -7,7 +7,7 @@ const BindingFlags InstancePrivate = BindingFlags.Instance | BindingFlags.NonPub
 if (args.Length < 2)
 {
     Console.Error.WriteLine(
-        "Usage: ReferenceParity <eval|moves|hash> <FEN> | search <FEN> <depth> | randomfens|randomaudit <seed> <count> [max-plies]");
+        "Usage: ReferenceParity <eval|moves|hash> <FEN> | search|bench <FEN> <depth> | randomfens|randomaudit <seed> <count> [max-plies]");
     return 2;
 }
 
@@ -88,6 +88,7 @@ switch (action)
         return 0;
     }
     case "search":
+    case "bench":
     {
         if (args.Length < 3 || !int.TryParse(args[2], out int maxDepth) || maxDepth < 1)
         {
@@ -112,6 +113,7 @@ switch (action)
 
         Move bestMove = Move.NullMove;
         int bestEval = 0;
+        var searchTimer = System.Diagnostics.Stopwatch.StartNew();
         for (int depth = 1; depth <= maxDepth; depth++)
         {
             hasSearchedField.SetValue(searcher, false);
@@ -125,8 +127,11 @@ switch (action)
             if (Searcher.IsMateScore(bestEval) && Searcher.NumPlyToMateFromScore(bestEval) <= depth)
                 break;
         }
+        searchTimer.Stop();
 
-        Console.WriteLine($"bestmove {MoveToUci(bestMove)} score {bestEval}");
+        Console.WriteLine(action == "bench"
+            ? $"bestmove {MoveToUci(bestMove)} score {bestEval} elapsed_ms {searchTimer.Elapsed.TotalMilliseconds:F3}"
+            : $"bestmove {MoveToUci(bestMove)} score {bestEval}");
         return 0;
     }
     default:

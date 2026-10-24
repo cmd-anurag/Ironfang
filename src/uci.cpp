@@ -77,7 +77,7 @@ void uciLoop() {
         iss >> token;
 
         if(token == "uci") {
-            printUciLine("id name Ironfangv19");
+            printUciLine("id name Ironfangv20");
             printUciLine("id author dark");
             printUciLine("option name RootDiagnostics type check default false");
             printUciLine("uciok");

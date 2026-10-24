@@ -4,12 +4,10 @@
 #include <cstdlib>
 
 namespace {
-constexpr uint16_t INVALID_PACKED_MOVE = 0xFFFF;
-
 uint16_t packMove(const Move &move)
 {
     if (move.from < 0 || move.from >= 64 || move.to < 0 || move.to >= 64)
-        return INVALID_PACKED_MOVE;
+        return 0; // The reference's default/NullMove has packed value zero.
 
     int flag = 0;
     if (move.isEnPassant) {
@@ -33,9 +31,6 @@ uint16_t packMove(const Move &move)
 
 Move unpackMove(uint16_t packedMove)
 {
-    if (packedMove == INVALID_PACKED_MOVE)
-        return Move(NONE, -1, -1);
-
     const int from = packedMove & 0x3F;
     const int to = (packedMove >> 6) & 0x3F;
     const int flag = (packedMove >> 12) & 0x0F;
@@ -48,7 +43,8 @@ Move unpackMove(uint16_t packedMove)
     const bool kingSideCastle = flag == 2 && to > from;
     const bool queenSideCastle = flag == 2 && to < from;
     // Hash moves are hints only, so the piece/capture fields are unnecessary.
-    return Move(NONE, from, to, promotionType, 0, kingSideCastle,
+    const Piece pieceHint = flag == 3 ? TT_PAWN_DOUBLE_PUSH_HINT : NONE;
+    return Move(pieceHint, from, to, promotionType, 0, kingSideCastle,
                 queenSideCastle, enPassant);
 }
 
@@ -74,8 +70,9 @@ bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int be
 
     // Match the reference's hash-move hint behavior: move ordering may use
     // the indexed move even when the stored key collided with this position.
-    if (entry.key != 0)
-        outMove = unpackMove(entry.packedMove);
+    // The reference always reads the indexed entry's move, even for an empty
+    // slot (whose default move is a1-a1) or a matching zero key.
+    outMove = unpackMove(entry.packedMove);
 
     if (entry.key == zobristKey) {
         ++keyMatchCount;
@@ -92,11 +89,17 @@ bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int be
 
             switch(storedFlag(entry)) {
                 case TT_EXACT:
+                    // The reference uses -1 as both a valid evaluation and
+                    // LookupFailed. Searcher treats an exact -1 result as a
+                    // miss and searches the node again, so preserve that
+                    // behavior for decision parity.
+                    if (eval == -1) return false;
                     ++hitCount;
                     outEval = eval;
                     return true;
                 case TT_LOWER:
                     if (eval >= beta) {
+                        if (eval == -1) return false;
                         ++hitCount;
                         outEval = eval;
                         return true;
@@ -104,6 +107,7 @@ bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int be
                     break;
                 case TT_UPPER:
                     if (eval <= alpha) {
+                        if (eval == -1) return false;
                         ++hitCount;
                         outEval = eval;
                         return true;

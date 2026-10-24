@@ -10,7 +10,9 @@
 #include <assert.h>
 #include <cstdlib>
 #include <atomic>
+#include <condition_variable>
 #include <mutex>
+#include <thread>
 
 std::vector<std::vector<Move>> killerMoves(MAX_PLY, std::vector<Move>(2, Move(NONE, -1, -1)));
 std::array<std::array<std::array<int, 64>, 64>, 2> historyHeuristics{};
@@ -24,7 +26,6 @@ uint64_t firstMoveCutoffCount = 0;
 int selectiveDepth = 0;
 
 namespace {
-constexpr uint64_t TIME_CHECK_NODE_INTERVAL = 1024;
 constexpr int HASH_MOVE_SCORE = 100000000;
 constexpr int WINNING_CAPTURE_BIAS = 8000000;
 constexpr int LOSING_CAPTURE_BIAS = 2000000;
@@ -36,15 +37,56 @@ std::array<int, MAX_PLY> pvLength{};
 std::array<std::vector<Move>, MAX_PLY> searchMoveBuffers;
 std::chrono::steady_clock::time_point hardSearchDeadline;
 bool hasHardSearchDeadline = false;
-bool searchStoppedByTime = false;
+std::atomic<bool> searchStoppedByTime{false};
 std::atomic<bool> searchStopRequested{false};
 bool rootDiagnosticsEnabled = false;
+Move iterationBestMove(NONE, -1, -1);
+int iterationBestScore = -INF;
+bool hasSearchedAtLeastOneRootMove = false;
+Move previousRootBestMove(NONE, -1, -1);
 uint64_t lateMoveReductionCount = 0;
 uint64_t lateMoveResearchCount = 0;
 uint64_t pvsResearchCount = 0;
 uint64_t nullMoveTryCount = 0;
 uint64_t nullMoveCutoffCount = 0;
 uint64_t repetitionPathEntriesScanned = 0;
+
+struct RepetitionPathEntryGuard {
+    BitBoard& board;
+    bool added;
+
+    ~RepetitionPathEntryGuard() {
+        if (added) --board.pathDepth;
+    }
+};
+
+class SearchDeadlineTimer {
+public:
+    SearchDeadlineTimer(bool enabled, std::chrono::steady_clock::time_point deadline)
+        : thread_(enabled ? std::thread([this, deadline] {
+              std::unique_lock<std::mutex> lock(mutex_);
+              if (!condition_.wait_until(lock, deadline, [this] { return cancelled_; }))
+                  searchStoppedByTime.store(true, std::memory_order_relaxed);
+          }) : std::thread()) {}
+
+    ~SearchDeadlineTimer() {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            cancelled_ = true;
+        }
+        condition_.notify_one();
+        if (thread_.joinable()) thread_.join();
+    }
+
+    SearchDeadlineTimer(const SearchDeadlineTimer&) = delete;
+    SearchDeadlineTimer& operator=(const SearchDeadlineTimer&) = delete;
+
+private:
+    std::mutex mutex_;
+    std::condition_variable condition_;
+    bool cancelled_ = false;
+    std::thread thread_;
+};
 
 int squareForPieceSquareTable(Piece piece, int square) {
     if ((piece & 7) == 0 || piece == NONE) return square;
@@ -56,12 +98,30 @@ int squareForPieceSquareTable(Piece piece, int square) {
     return getPieceColor(piece) == WHITE ? Evaluation::mirror(square) : square;
 }
 
+int referenceMoveFlag(const Move& move) {
+    if (move.isEnPassant) return 1;
+    if (move.isKingSideCastle || move.isQueenSideCastle) return 2;
+    switch (move.promotion & 7) {
+        case 5: return 4;
+        case 2: return 5;
+        case 4: return 6;
+        case 3: return 7;
+    }
+    if (move.piece == TT_PAWN_DOUBLE_PUSH_HINT ||
+        ((move.piece & 7) == 1 && std::abs(move.to - move.from) == 16))
+        return 3;
+    return 0;
+}
+
 bool matchesHashMove(const Move& move, const Move& hashMove) {
     return hashMove.from >= 0 && move.from == hashMove.from &&
-        move.to == hashMove.to && (move.promotion & 7) == (hashMove.promotion & 7) &&
-        move.isEnPassant == hashMove.isEnPassant &&
-        move.isKingSideCastle == hashMove.isKingSideCastle &&
-        move.isQueenSideCastle == hashMove.isQueenSideCastle;
+        move.to == hashMove.to && referenceMoveFlag(move) == referenceMoveFlag(hashMove);
+}
+
+bool matchesReferenceMoveIdentity(const Move& move, const Move& other) {
+    return move.from == other.from && move.to == other.to &&
+        move.from >= 0 && move.to >= 0 &&
+        referenceMoveFlag(move) == referenceMoveFlag(other);
 }
 
 Gamestate saveGameState(const BitBoard& board) {
@@ -432,7 +492,7 @@ void generateReferenceMoves(const BitBoard& board, std::vector<Move>& moves,
         const int target = popReferenceLSB(capturePromotionsB);
         const int from = target - captureBOffset;
         if (!squareIsPinnedToKing(attacks, from) ||
-            (attacks.pinRays & (1ULL << target))) addPromotions(from, target);
+            targetRemainsOnPinLine(kingSquare, from, target)) addPromotions(from, target);
     }
 
     if (board.enPassantSquare >= 0) {
@@ -565,8 +625,9 @@ void orderMoves(BitBoard& board, std::vector<Move>& moves, const Move& hashMove,
 
         if (!isCapture) {
             if (!inQuiescence && ply >= 0 && ply < MAX_KILLER_PLY) {
-                if (move == killerMoves[ply][0]) score += KILLER_MOVE_BIAS;
-                else if (move == killerMoves[ply][1]) score += KILLER_MOVE_BIAS;
+                if (matchesReferenceMoveIdentity(move, killerMoves[ply][0]) ||
+                    matchesReferenceMoveIdentity(move, killerMoves[ply][1]))
+                    score += KILLER_MOVE_BIAS;
             }
             if (move.from >= 0 && move.from < 64 && move.to >= 0 && move.to < 64)
                 score += historyHeuristics[sideIndex][move.from][move.to];
@@ -591,24 +652,11 @@ void updatePrincipalVariation(int ply, const Move& move) {
     pvLength[ply] = std::max(ply + 1, childLength);
 }
 
-bool checkSearchDeadline(bool force = false) {
+bool checkSearchDeadline(bool /*force*/ = false) {
     if (searchStopRequested.load(std::memory_order_relaxed)) {
-        searchStoppedByTime = true;
+        searchStoppedByTime.store(true, std::memory_order_relaxed);
     }
-    if (searchStoppedByTime) {
-        return true;
-    }
-    if (!hasHardSearchDeadline) {
-        return false;
-    }
-    if (!force && (nodeCount % TIME_CHECK_NODE_INTERVAL) != 0) {
-        return false;
-    }
-
-    if (std::chrono::steady_clock::now() >= hardSearchDeadline) {
-        searchStoppedByTime = true;
-    }
-    return searchStoppedByTime;
+    return searchStoppedByTime.load(std::memory_order_relaxed);
 }
 
 uint64_t transpositionKey(const BitBoard& board) {
@@ -686,6 +734,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     nullMoveCutoffCount = 0;
     repetitionPathEntriesScanned = 0;
     pvLength.fill(0);
+    previousRootBestMove = Move(NONE, -1, -1);
     // The reference clears history before every search but retains killers
     // until ucinewgame.
     historyHeuristics = {};
@@ -736,6 +785,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     if (hasHardSearchDeadline) {
         hardSearchDeadline = startTime + std::chrono::milliseconds(hardTimeLimit);
     }
+    SearchDeadlineTimer deadlineTimer(hasHardSearchDeadline, hardSearchDeadline);
     
     // Default move (will be overwritten soon)
     Move bestMove{NONE, -1, -1};
@@ -790,130 +840,31 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
             break;
         }
 
-        // Start a new iteration
-        int alpha = -INF;
-        int beta = INF;
-        int iterationBestScore = -INF;
-        Move iterationBestMove = bestMove; // Start with previous best
-        std::array<Move, MAX_PLY> iterationPV{};
-        int iterationPVLength = 0;
-        
-        Move rootHashMove(NONE, -1, -1);
-        int rootTTEval = 0;
-        const bool rootTTHit = TT.probe(transpositionKey(board), depth, -INF, INF, 0,
-                                        rootTTEval, rootHashMove);
-        const bool usedRootTTResult = rootTTHit && rootHashMove.from >= 0;
+        // Use the same root Search() path as the reference rather than
+        // maintaining a second, hand-copied root implementation here.
+        iterationBestMove = Move(NONE, -1, -1);
+        iterationBestScore = -INF;
+        hasSearchedAtLeastOneRootMove = false;
+        const int completedScore = minimaxAlphaBeta(board, depth, -INF, INF, 0, 0);
 
-        if (usedRootTTResult) {
-            // The reference returns a usable root TT result without searching
-            // the root moves again.
-            iterationBestMove = rootHashMove;
-            iterationBestScore = rootTTEval;
-            iterationPV[0] = rootHashMove;
-            iterationPVLength = 1;
-        } else {
-            // Regenerate in the same base order each iteration, as the
-            // reference does before applying its move ordering.
-            generateReferenceMoves(board, moves, false, rootAttackData);
-            rootHashMove = bestMove;
-            orderMoves(board, moves, rootHashMove, rootAttackData, false, 0);
-
-            // Moves are legal before ordering, matching the reference's
-            // generator and making the LMR index count identical.
-            for (size_t rootMoveIndex = 0; rootMoveIndex < moves.size(); ++rootMoveIndex) {
-                const Move& move = moves[rootMoveIndex];
-                const Gamestate prevdata = saveGameState(board);
-                board.makeLegalMove(move);
-
-                int rootExtension = 0;
-                if (MAX_EXTENSIONS > 0) {
-                    const int defendingKing = board.sideToMove == WHITE
-                        ? board.whiteKingSquare
-                        : board.blackKingSquare;
-                    const bool givesCheck = board.isSquareAttacked(defendingKing, prevdata.sideToMove);
-                    const int targetRank = move.to / 8;
-                    const bool advancedPawn = (move.piece & 7) == 1 &&
-                        (targetRank == 1 || targetRank == 6);
-                    if (givesCheck || advancedPawn) rootExtension = 1;
-                }
-
-                const uint64_t nodesBefore = nodeCount;
-                const uint64_t reductionsBefore = lateMoveReductionCount;
-                const uint64_t researchesBefore = lateMoveResearchCount;
-                const bool isCapture = move.capture != NONE;
-                const bool reduceRootMove = depth >= 3 && rootMoveIndex >= 3 &&
-                    rootExtension == 0 && !isCapture;
-                const int score = searchChild(
-                    board, depth - 1 + rootExtension, alpha, beta, 1,
-                    rootExtension, reduceRootMove);
-
-                std::array<Move, MAX_PLY> candidatePV{};
-                int candidatePVLength = 1;
-                candidatePV[0] = move;
-                if (rootDiagnosticsEnabled) {
-                    const int continuationLength = std::max(0, std::min(pvLength[1] - 1, MAX_PLY - 2));
-                    for (int index = 0; index < continuationLength; ++index) {
-                        candidatePV[index + 1] = pvTable[1][index + 1];
-                    }
-                    candidatePVLength += continuationLength;
-                }
-
-                board.unmakeMove(move, prevdata);
-
-                // A timed-out recursive search returns a neutral placeholder score.
-                // Like the reference, keep this iteration's best root move if at
-                // least one legal move completed; otherwise retain the fallback.
-                if (checkSearchDeadline(true)) {
-                    if (iterationBestScore > -INF) {
-                        bestMove = iterationBestMove;
-                        bestScore = iterationBestScore;
-                        bestPV = iterationPV;
-                        bestPVLength = iterationPVLength;
-                    }
-                    emitSearchStats();
-                    return bestMove;
-                }
-
-                if (rootDiagnosticsEnabled) {
-                    std::lock_guard<std::mutex> outputLock(uciOutputMutex);
-                    std::cout << "info string root depth=" << depth
-                              << " move=" << moveToUCI(move)
-                              << " score=" << score
-                              << " nodes=" << (nodeCount - nodesBefore)
-                              << " lmr=" << (lateMoveReductionCount - reductionsBefore)
-                              << " lmr_researches=" << (lateMoveResearchCount - researchesBefore)
-                              << " pv";
-                    for (int index = 0; index < candidatePVLength; ++index) {
-                        std::cout << ' ' << moveToUCI(candidatePV[index]);
-                    }
-                    std::cout << "\n" << std::flush;
-                }
-
-                // Check if this is a better move.
-                if (score > iterationBestScore) {
-                    iterationBestScore = score;
-                    iterationBestMove = move;
-                    iterationPV[0] = move;
-                    const int continuationLength = std::max(0, std::min(pvLength[1] - 1, MAX_PLY - 2));
-                    for (int index = 0; index < continuationLength; ++index) {
-                        iterationPV[index + 1] = pvTable[1][index + 1];
-                    }
-                    iterationPVLength = continuationLength + 1;
-
-                    if (score > alpha) {
-                        alpha = score;
-                    }
-                }
+        if (searchStoppedByTime) {
+            if (hasSearchedAtLeastOneRootMove) {
+                bestMove = iterationBestMove;
+                bestScore = iterationBestScore;
+                bestPVLength = std::max(1, std::min(pvLength[0], MAX_PLY));
+                for (int index = 0; index < bestPVLength; ++index)
+                    bestPV[index] = pvTable[0][index];
             }
+            emitSearchStats();
+            return bestMove;
         }
-        
-        // Only update bestMove if we completed the iteration
+
         bestMove = iterationBestMove;
-        bestScore = iterationBestScore;
-        bestPV = iterationPV;
-        bestPVLength = iterationPVLength;
-        if (!usedRootTTResult)
-            TT.store(transpositionKey(board), depth, scoreToTT(bestScore, 0), TT_EXACT, bestMove);
+        bestScore = completedScore;
+        previousRootBestMove = bestMove;
+        bestPVLength = std::max(1, std::min(pvLength[0], MAX_PLY));
+        for (int index = 0; index < bestPVLength; ++index)
+            bestPV[index] = pvTable[0][index];
 
         int hashFull = TT.hashfull();
 
@@ -973,12 +924,16 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         return Evaluation::evaluate(board);
     }
 
-    if (board.pathDepth >= 1024) return Evaluation::evaluate(board);
-    board.repetitionPath[board.pathDepth++] = board.zobristKey;
+    const bool appendPathPosition = ply > 0 || board.pathDepth == 0 ||
+        board.repetitionPath[board.pathDepth - 1] != board.zobristKey;
+    if (appendPathPosition) {
+        if (board.pathDepth >= 1024) return Evaluation::evaluate(board);
+        board.repetitionPath[board.pathDepth++] = board.zobristKey;
+    }
+    const RepetitionPathEntryGuard pathEntryGuard{board, appendPathPosition};
 
     if (ply > 0 &&
         (board.halfmoveClock >= 100 || countCurrentRepetitionOccurrences(board) >= 2)) {
-        --board.pathDepth;
         return 0;
     }
 
@@ -986,7 +941,6 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         alpha = std::max(alpha, -MATE_SCORE + ply);
         beta = std::min(beta, MATE_SCORE - ply);
         if (alpha >= beta) {
-            --board.pathDepth;
             return alpha;
         }
     }
@@ -995,12 +949,18 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     Move tempMove = Move(NONE, -1, -1);
     int tempEval;
     if (TT.probe(transpositionKey(board), depth, alpha, beta, ply, tempEval, tempMove)) {
-        --board.pathDepth;
+        if (ply == 0) {
+            iterationBestMove = tempMove;
+            iterationBestScore = tempEval;
+            if (tempMove.from >= 0) {
+                pvTable[0][0] = tempMove;
+                pvLength[0] = 1;
+            }
+        }
         return tempEval;
     }
 
     if (depth <= 0) {
-        --board.pathDepth;
         return quiescenceSearch(board, alpha, beta, ply);
     }
 
@@ -1009,18 +969,23 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     generateReferenceMoves(board, moves, false, attackData);
     if (moves.empty()) {
         if (attackData.inCheck) {
-            --board.pathDepth;
             return -MATE_SCORE + ply;
         }
-        --board.pathDepth;
         return 0; // stalemate
     }
 
-    orderMoves(board, moves, tempMove, attackData, false, ply);
+    // The reference seeds root ordering with the previous completed iteration's
+    // best move. Internal nodes use the move stored at the current TT index,
+    // even when the indexed entry belongs to a colliding key.
+    const Move& moveOrderHint = ply == 0 ? previousRootBestMove : tempMove;
+    orderMoves(board, moves, moveOrderHint, attackData, false, ply);
 
     Move bestMove(NONE, -1, -1);
     for (size_t moveIndex = 0; moveIndex < moves.size(); ++moveIndex) {
         const Move& move = moves[moveIndex];
+        const uint64_t nodesBefore = nodeCount;
+        const uint64_t reductionsBefore = lateMoveReductionCount;
+        const uint64_t researchesBefore = lateMoveResearchCount;
         const Gamestate prevdata = saveGameState(board);
         board.makeLegalMove(move);
 
@@ -1045,9 +1010,31 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
             numExtensions + extension, reduceMove);
         board.unmakeMove(move, prevdata);
 
-        if (searchStoppedByTime) {
-            --board.pathDepth;
+        if (searchStoppedByTime || (ply == 0 && checkSearchDeadline(true))) {
             return 0;
+        }
+
+        if (rootDiagnosticsEnabled && ply == 0) {
+            std::array<Move, MAX_PLY> candidatePV{};
+            int candidatePVLength = 1;
+            candidatePV[0] = move;
+            const int continuationLength = std::max(
+                0, std::min(pvLength[1] - 1, MAX_PLY - 2));
+            for (int index = 0; index < continuationLength; ++index)
+                candidatePV[index + 1] = pvTable[1][index + 1];
+            candidatePVLength += continuationLength;
+
+            std::lock_guard<std::mutex> outputLock(uciOutputMutex);
+            std::cout << "info string root depth=" << depth
+                      << " move=" << moveToUCI(move)
+                      << " score=" << score
+                      << " nodes=" << (nodeCount - nodesBefore)
+                      << " lmr=" << (lateMoveReductionCount - reductionsBefore)
+                      << " lmr_researches=" << (lateMoveResearchCount - researchesBefore)
+                      << " pv";
+            for (int index = 0; index < candidatePVLength; ++index)
+                std::cout << ' ' << moveToUCI(candidatePV[index]);
+            std::cout << "\n" << std::flush;
         }
 
         // Beta cutoff
@@ -1057,7 +1044,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
             updatePrincipalVariation(ply, move);
 
             if (!isCapture && ply < MAX_KILLER_PLY &&
-                !(move == killerMoves[ply][0])) {
+                !matchesReferenceMoveIdentity(move, killerMoves[ply][0])) {
                 killerMoves[ply][1] = killerMoves[ply][0];
                 killerMoves[ply][0] = move;
             }
@@ -1068,7 +1055,6 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
             }
             TT.store(transpositionKey(board), depth, scoreToTT(beta, ply), TT_LOWER, move);
 
-            --board.pathDepth;
             return beta;
         }
 
@@ -1076,6 +1062,11 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
             alpha = score;
             bestMove = move;
             updatePrincipalVariation(ply, move);
+            if (ply == 0) {
+                iterationBestMove = move;
+                iterationBestScore = score;
+                hasSearchedAtLeastOneRootMove = true;
+            }
         }
     }
 
@@ -1088,7 +1079,6 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     }
 
     TT.store(transpositionKey(board), depth, scoreToTT(alpha, ply), flag, bestMove);
-    --board.pathDepth;
     return alpha;
 }
 

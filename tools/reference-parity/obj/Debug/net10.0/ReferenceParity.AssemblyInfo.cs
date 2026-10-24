@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("ReferenceParity")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+b94db73db443c7dbcc2d2dffdbd2d06083c70adf")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+fd8bb31e13ed4abb1340004f21bc1fbbef88c8e7")]
 [assembly: System.Reflection.AssemblyProductAttribute("ReferenceParity")]
 [assembly: System.Reflection.AssemblyTitleAttribute("ReferenceParity")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

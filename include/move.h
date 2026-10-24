@@ -26,6 +26,10 @@ struct Move
     Move(Piece p, int from, int to, int promotion = 0, int capture = 0, bool isKingSideCastle = false, bool isQueenSideCastle = false, bool isEnPassant = false) : piece(p), from(from), to(to), promotion(promotion), capture(capture), isKingSideCastle(isKingSideCastle), isQueenSideCastle(isQueenSideCastle), isEnPassant(isEnPassant) {};
 };
 
+// TT-only marker used to preserve the reference's packed pawn-double-push
+// flag after decoding a move hint. Search never treats this as a board piece.
+inline constexpr Piece TT_PAWN_DOUBLE_PUSH_HINT = static_cast<Piece>(15);
+
 std::string moveToAlgrebraic(Move move);
 std::string moveToUCI(Move move);
 Move uciToMove(const std::string& uci, BitBoard &board);
