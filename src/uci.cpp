@@ -21,6 +21,7 @@ std::string trim(const std::string& s) {
 
 namespace {
 constexpr int MAX_GAME_REPETITION_HISTORY = 1024 - MAX_PLY - 1;
+bool useOpeningBook = true;
 
 void printUciLine(const std::string& line) {
     std::lock_guard<std::mutex> outputLock(uciOutputMutex);
@@ -80,6 +81,7 @@ void uciLoop() {
             printUciLine("id name Ironfangv20");
             printUciLine("id author dark");
             printUciLine("option name RootDiagnostics type check default false");
+            printUciLine("option name UseOpeningBook type check default true");
             printUciLine("uciok");
         }
         else if (token == "setoption") {
@@ -92,6 +94,10 @@ void uciLoop() {
             if (nameToken == "name" && optionName == "RootDiagnostics" &&
                 valueToken == "value") {
                 Search::setRootDiagnostics(value == "true");
+            }
+            else if (nameToken == "name" && optionName == "UseOpeningBook" &&
+                     valueToken == "value") {
+                useOpeningBook = value == "true";
             }
         }
         else if(token == "isready") {
@@ -254,7 +260,9 @@ void uciLoop() {
             }
             int maxDepth = requestedDepth > 0 ? std::min(requestedDepth, MAX_DEPTH) : MAX_DEPTH;
 
-            const std::string bookMove = OpeningBook::chooseMove(board, gamePly);
+            const std::string bookMove = useOpeningBook
+                ? OpeningBook::chooseMove(board, gamePly)
+                : std::string{};
             if (!bookMove.empty()) {
                 printUciLine("bestmove " + bookMove);
                 continue;

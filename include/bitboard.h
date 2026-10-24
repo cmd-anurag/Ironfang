@@ -62,17 +62,27 @@ class BitBoard {
         
         bool isSquareAttacked(int square, Color opponentColor) const;
         bool isSquareAttacked(int square, Color opponentColor, uint64_t occupied) const;
+        bool isInCheck() const;
 
         bool makeMove(const Move &move);
         // Applies a move produced by the search's legal move generator.
         // Unlike makeMove(), this skips the redundant post-move king-safety check.
         void makeLegalMove(const Move &move);
+        void makeSearchMove(uint16_t encodedMove, Piece& capturedPiece);
         void unmakeMove(const Move &move, const Gamestate &prevState);
+        void unmakeSearchMove(uint16_t encodedMove, const Gamestate& prevState,
+                              Piece capturedPiece);
         bool tryMove(const Move& move);
         
-        uint64_t getWhitePieces() const { return whitePawns | whiteRooks | whiteBishops | whiteQueens | whiteKnights | whiteKing; }
+        uint64_t getWhitePieces() const {
+            return whitePawns | whiteRooks | whiteBishops | whiteQueens |
+                   whiteKnights | whiteKing;
+        }
 
-        uint64_t getBlackPieces() const { return blackPawns | blackRooks | blackBishops | blackQueens | blackKnights | blackKing; }
+        uint64_t getBlackPieces() const {
+            return blackPawns | blackRooks | blackBishops | blackQueens |
+                   blackKnights | blackKing;
+        }
 
         inline int getLSB(uint64_t bb) const {
             return __builtin_ctzll(bb);
@@ -137,14 +147,13 @@ class BitBoard {
         uint64_t whiteQueens, blackQueens;
         uint64_t whiteKnights, blackKnights;
         uint64_t whiteKing, blackKing;
+        mutable bool cachedInCheck = false;
+        mutable bool hasCachedInCheck = false;
 
-        bool applyMove(const Move &move, bool validateKingSafety);
-
-        
-        
         inline void clearSquare(int square) {
             const uint64_t mask = ~(1ULL << square);
-            switch (squareContents[square]) {
+            const Piece previousPiece = squareContents[square];
+            switch (previousPiece) {
                 case WP: whitePawns &= mask; break;
                 case BP: blackPawns &= mask; break;
                 case WR: whiteRooks &= mask; break;
@@ -158,6 +167,46 @@ class BitBoard {
                 case WK: whiteKing &= mask; break;
                 case BK: blackKing &= mask; break;
                 case NONE: break;
+            }
+            squareContents[square] = NONE;
+        }
+
+        inline void placePieceOnEmpty(Piece p, int square) {
+            const uint64_t mask = 1ULL << square;
+            switch (p) {
+                case WP: whitePawns |= mask; break;
+                case BP: blackPawns |= mask; break;
+                case WR: whiteRooks |= mask; break;
+                case BR: blackRooks |= mask; break;
+                case WB: whiteBishops |= mask; break;
+                case BB: blackBishops |= mask; break;
+                case WQ: whiteQueens |= mask; break;
+                case BQ: blackQueens |= mask; break;
+                case WN: whiteKnights |= mask; break;
+                case BN: blackKnights |= mask; break;
+                case WK: whiteKing |= mask; break;
+                case BK: blackKing |= mask; break;
+                default: return;
+            }
+            squareContents[square] = p;
+        }
+
+        inline void removePieceKnown(Piece p, int square) {
+            const uint64_t mask = ~(1ULL << square);
+            switch (p) {
+                case WP: whitePawns &= mask; break;
+                case BP: blackPawns &= mask; break;
+                case WR: whiteRooks &= mask; break;
+                case BR: blackRooks &= mask; break;
+                case WB: whiteBishops &= mask; break;
+                case BB: blackBishops &= mask; break;
+                case WQ: whiteQueens &= mask; break;
+                case BQ: blackQueens &= mask; break;
+                case WN: whiteKnights &= mask; break;
+                case BN: blackKnights &= mask; break;
+                case WK: whiteKing &= mask; break;
+                case BK: blackKing &= mask; break;
+                default: return;
             }
             squareContents[square] = NONE;
         }

@@ -1,53 +1,7 @@
 #include "tt.h"
 #include <cstring>
 #include <algorithm>
-#include <cstdlib>
-
 namespace {
-uint16_t packMove(const Move &move)
-{
-    if (move.from < 0 || move.from >= 64 || move.to < 0 || move.to >= 64)
-        return 0; // The reference's default/NullMove has packed value zero.
-
-    int flag = 0;
-    if (move.isEnPassant) {
-        flag = 1;
-    } else if (move.isKingSideCastle || move.isQueenSideCastle) {
-        flag = 2;
-    } else if ((move.promotion & 7) == 5) {
-        flag = 4;
-    } else if ((move.promotion & 7) == 2) {
-        flag = 5;
-    } else if ((move.promotion & 7) == 4) {
-        flag = 6;
-    } else if ((move.promotion & 7) == 3) {
-        flag = 7;
-    } else if ((move.piece & 7) == 1 && std::abs(move.to - move.from) == 16) {
-        flag = 3;
-    }
-
-    return static_cast<uint16_t>(move.from | (move.to << 6) | (flag << 12));
-}
-
-Move unpackMove(uint16_t packedMove)
-{
-    const int from = packedMove & 0x3F;
-    const int to = (packedMove >> 6) & 0x3F;
-    const int flag = (packedMove >> 12) & 0x0F;
-    int promotionType = 0;
-    if (flag == 4) promotionType = 5;
-    else if (flag == 5) promotionType = 2;
-    else if (flag == 6) promotionType = 4;
-    else if (flag == 7) promotionType = 3;
-    const bool enPassant = flag == 1;
-    const bool kingSideCastle = flag == 2 && to > from;
-    const bool queenSideCastle = flag == 2 && to < from;
-    // Hash moves are hints only, so the piece/capture fields are unnecessary.
-    const Piece pieceHint = flag == 3 ? TT_PAWN_DOUBLE_PUSH_HINT : NONE;
-    return Move(pieceHint, from, to, promotionType, 0, kingSideCastle,
-                queenSideCastle, enPassant);
-}
-
 TT_FLAG storedFlag(const TTEntry &entry)
 {
     return static_cast<TT_FLAG>(entry.flag);
@@ -61,7 +15,7 @@ TranspositionTable::TranspositionTable()
 }
 
 bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int beta,
-                               int ply, int &outEval, Move &outMove, bool allowCutoff)
+                               int ply, int &outEval, uint16_t &outMove, bool allowCutoff)
 {
     ++lookupCount;
 
@@ -72,7 +26,7 @@ bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int be
     // the indexed move even when the stored key collided with this position.
     // The reference always reads the indexed entry's move, even for an empty
     // slot (whose default move is a1-a1) or a matching zero key.
-    outMove = unpackMove(entry.packedMove);
+    outMove = entry.packedMove;
 
     if (entry.key == zobristKey) {
         ++keyMatchCount;
@@ -122,7 +76,7 @@ bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int be
 
 
 void TranspositionTable::store(uint64_t zobristKey, int depth, int eval,
-                               TT_FLAG flag, const Move &bestMove)
+                               TT_FLAG flag, uint16_t bestMove)
 {
     ++totalStoreAttempts;
     size_t index = static_cast<size_t>(zobristKey % TT_SIZE);
@@ -138,7 +92,7 @@ void TranspositionTable::store(uint64_t zobristKey, int depth, int eval,
     entry.key = zobristKey;
     entry.depth = static_cast<uint8_t>(depth);
     entry.eval = eval;
-    entry.packedMove = packMove(bestMove);
+    entry.packedMove = bestMove;
     entry.flag = static_cast<uint8_t>(flag);
     ++actualStores;
 }

@@ -50,3 +50,25 @@ streams differ, and the C++ and .NET builds can complete different work before
 the same deadline. The small exploratory depth-7 timing sample varied by
 position and is not a reliable throughput estimate; the reference project
 targets .NET 6 while this harness targets .NET 10.
+
+For controlled UCI comparisons, disable Ironfang's opening book before sending
+the position and go commands:
+
+```text
+setoption name UseOpeningBook value false
+```
+
+The reference UCI build also reports a comparable diagnostic line after each
+non-book search:
+
+```text
+info string stats total_nodes=... elapsed_ms=... nps=... depth=... partial=0
+```
+
+This can be compared with Ironfang's `info string stats` output at the same
+FEN and time budget. The reference's `total_nodes` includes main-search and
+quiescence calls.
+
+The option defaults to `true` for normal play. Disabling it prevents random
+opening choices from contaminating fixed-depth, timed-throughput, or
+color-balanced search comparisons.

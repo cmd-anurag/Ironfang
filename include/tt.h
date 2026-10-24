@@ -1,7 +1,6 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
-#include "move.h"
 
 enum TT_FLAG  { 
     TT_EXACT,
@@ -36,7 +35,7 @@ class TranspositionTable {
             int beta,
             int ply,
             int &outEval,
-            Move &outMove,
+            uint16_t &outMove,
             bool allowCutoff = true
         );
 
@@ -45,7 +44,7 @@ class TranspositionTable {
             int depth,
             int eval,
             TT_FLAG flag,
-            const Move &bestMove
+            uint16_t bestMove
         );
 
         void clear();

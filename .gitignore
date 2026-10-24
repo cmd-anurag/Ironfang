@@ -9,3 +9,5 @@ chess
 /dist/
 perf.data
 bench-results*.csv
+tools/reference-parity/bin/
+tools/reference-parity/obj/

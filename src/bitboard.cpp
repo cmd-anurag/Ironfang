@@ -76,6 +76,7 @@ BitBoard::BitBoard() {
 }
 
 void BitBoard::setStartPosition() {
+    hasCachedInCheck = false;
     // Clear all bitboards
     whitePawns = blackPawns = 0;
     whiteRooks = blackRooks = 0;
@@ -186,6 +187,16 @@ bool BitBoard::isSquareAttacked(int square, Color opponentColor, uint64_t occupi
     if (getKingAttacks(square) & opponentKing) return true;
     
     return false;
+}
+
+bool BitBoard::isInCheck() const {
+    if (!hasCachedInCheck) {
+        const int kingSquare = sideToMove == WHITE ? whiteKingSquare : blackKingSquare;
+        const Color opponent = sideToMove == WHITE ? BLACK : WHITE;
+        cachedInCheck = isSquareAttacked(kingSquare, opponent);
+        hasCachedInCheck = true;
+    }
+    return cachedInCheck;
 }
 
 std::vector<Move> BitBoard::generateMoves() const {
@@ -552,17 +563,187 @@ void BitBoard::generateKingMoves(int square, std::vector<Move>& moves, Piece p, 
     }
 }
 
+namespace {
+uint16_t encodeCompactMove(const Move& move) {
+    int flag = 0;
+    if (move.isEnPassant) flag = 1;
+    else if (move.isKingSideCastle || move.isQueenSideCastle) flag = 2;
+    else if (move.promotion) {
+        switch (move.promotion & 7) {
+            case 5: flag = 4; break;
+            case 2: flag = 5; break;
+            case 4: flag = 6; break;
+            case 3: flag = 7; break;
+        }
+    } else if ((move.piece & 7) == 1 && std::abs(move.to - move.from) == 16) {
+        flag = 3;
+    }
+    return static_cast<uint16_t>(move.from | (move.to << 6) | (flag << 12));
+}
+}
+
 bool BitBoard::makeMove(const Move &move) {
-    return applyMove(move, true);
+    const Gamestate prevState = {
+        sideToMove, enPassantSquare,
+        whiteKingsideCastle, whiteQueensideCastle,
+        blackKingsideCastle, blackQueensideCastle,
+        whiteKingSquare, blackKingSquare, zobristKey, halfmoveClock
+    };
+    Piece capturedPiece = NONE;
+    const uint16_t encodedMove = encodeCompactMove(move);
+    makeSearchMove(encodedMove, capturedPiece);
+    const bool legal = sideToMove == BLACK
+        ? !isSquareAttacked(whiteKingSquare, BLACK)
+        : !isSquareAttacked(blackKingSquare, WHITE);
+    if (!legal) unmakeSearchMove(encodedMove, prevState, capturedPiece);
+    return legal;
 }
 
 void BitBoard::makeLegalMove(const Move &move) {
-    // The search move generator already filters pins, checks, king attacks,
-    // and castling paths. Match the reference engine's search path by applying
-    // those moves directly rather than checking king safety a second time.
-    (void)applyMove(move, false);
+    Piece capturedPiece = NONE;
+    makeSearchMove(encodeCompactMove(move), capturedPiece);
 }
 
+void BitBoard::makeSearchMove(uint16_t encodedMove, Piece& capturedPiece) {
+    const int from = encodedMove & 0x3f;
+    const int to = (encodedMove >> 6) & 0x3f;
+    const int flag = encodedMove >> 12;
+    const Piece piece = getPiece(from);
+    const Color mover = sideToMove;
+    const bool white = mover == WHITE;
+    const bool isCastle = flag == 2;
+    const bool isEnPassant = flag == 1;
+    const bool isPromotion = flag >= 4;
+    const bool isDoublePush = flag == 3;
+    const bool kingSide = isCastle && to > from;
+    const int captureSquare = isEnPassant ? to + (white ? 8 : -8) : to;
+    capturedPiece = isEnPassant ? (white ? BP : WP) : getPiece(to);
+
+    const int oldCastling = castlingRightsIndex(
+        whiteKingsideCastle, whiteQueensideCastle,
+        blackKingsideCastle, blackQueensideCastle);
+    if (enPassantSquare != -1) {
+        zobristKey ^= zobristEnPassant[(enPassantSquare & 7) + 1];
+        enPassantSquare = -1;
+    }
+    xorPiece(zobristKey, piece, from);
+    clearSquare(from);
+
+    if (capturedPiece != NONE) {
+        xorPiece(zobristKey, capturedPiece, captureSquare);
+        clearSquare(captureSquare);
+    }
+
+    Piece placedPiece = piece;
+    if (isPromotion) {
+        placedPiece = flag == 4 ? (white ? WQ : BQ)
+            : flag == 5 ? (white ? WN : BN)
+            : flag == 6 ? (white ? WR : BR)
+            : (white ? WB : BB);
+    }
+    if (isCastle) {
+        const int rookFrom = white ? (kingSide ? 63 : 56) : (kingSide ? 7 : 0);
+        const int rookTo = white ? (kingSide ? 61 : 59) : (kingSide ? 5 : 3);
+        const Piece rook = white ? WR : BR;
+        xorPiece(zobristKey, piece, to);
+        xorPiece(zobristKey, rook, rookFrom);
+        xorPiece(zobristKey, rook, rookTo);
+        clearSquare(rookFrom);
+        setPiece(placedPiece, to);
+        setPiece(rook, rookTo);
+    } else {
+        xorPiece(zobristKey, placedPiece, to);
+        setPiece(placedPiece, to);
+    }
+
+    if (isDoublePush) {
+        enPassantSquare = from + (sideToMove == WHITE ? -8 : 8);
+        zobristKey ^= zobristEnPassant[(enPassantSquare & 7) + 1];
+    }
+
+    if (piece == WK) {
+        whiteKingSquare = to;
+        whiteKingsideCastle = false;
+        whiteQueensideCastle = false;
+    } else if (piece == BK) {
+        blackKingSquare = to;
+        blackKingsideCastle = false;
+        blackQueensideCastle = false;
+    } else if (piece == WR) {
+        if (from == 56) whiteQueensideCastle = false;
+        if (from == 63) whiteKingsideCastle = false;
+    } else if (piece == BR) {
+        if (from == 0) blackQueensideCastle = false;
+        if (from == 7) blackKingsideCastle = false;
+    }
+    if (capturedPiece != NONE) {
+        if (captureSquare == 56) whiteQueensideCastle = false;
+        if (captureSquare == 63) whiteKingsideCastle = false;
+        if (captureSquare == 0) blackQueensideCastle = false;
+        if (captureSquare == 7) blackKingsideCastle = false;
+    }
+
+    const int currentCastling = castlingRightsIndex(
+        whiteKingsideCastle, whiteQueensideCastle,
+        blackKingsideCastle, blackQueensideCastle);
+    if (oldCastling != currentCastling) {
+        zobristKey ^= zobristCastling[oldCastling];
+        zobristKey ^= zobristCastling[currentCastling];
+    }
+
+    sideToMove = sideToMove == WHITE ? BLACK : WHITE;
+    zobristKey ^= zobristBlackToMove;
+    halfmoveClock = (piece == WP || piece == BP || capturedPiece != NONE)
+        ? 0 : halfmoveClock + 1;
+    hasCachedInCheck = false;
+}
+
+void BitBoard::unmakeSearchMove(uint16_t encodedMove, const Gamestate& prevState,
+                                Piece capturedPiece) {
+    const int from = encodedMove & 0x3f;
+    const int to = (encodedMove >> 6) & 0x3f;
+    const int flag = encodedMove >> 12;
+    const Color mover = prevState.sideToMove;
+    const Piece pawn = mover == WHITE ? WP : BP;
+    const Piece king = mover == WHITE ? WK : BK;
+    const Piece rook = mover == WHITE ? WR : BR;
+
+    if (flag == 2) {
+        const bool kingSide = to > from;
+        const int rookFrom = mover == WHITE
+            ? (kingSide ? 63 : 56) : (kingSide ? 7 : 0);
+        const int rookTo = mover == WHITE
+            ? (kingSide ? 61 : 59) : (kingSide ? 5 : 3);
+        clearSquare(to);
+        clearSquare(rookTo);
+        setPiece(king, from);
+        setPiece(rook, rookFrom);
+    } else if (flag == 1) {
+        const int capturedSquare = to + (mover == WHITE ? 8 : -8);
+        clearSquare(to);
+        setPiece(pawn, from);
+        setPiece(capturedPiece, capturedSquare);
+    } else {
+        const Piece movedPiece = flag >= 4 ? pawn : getPiece(to);
+        clearSquare(to);
+        setPiece(movedPiece, from);
+        if (capturedPiece != NONE) setPiece(capturedPiece, to);
+    }
+
+    whiteKingsideCastle = prevState.whiteKingsideCastle;
+    whiteQueensideCastle = prevState.whiteQueensideCastle;
+    blackKingsideCastle = prevState.blackKingsideCastle;
+    blackQueensideCastle = prevState.blackQueensideCastle;
+    whiteKingSquare = prevState.whiteKingSquare;
+    blackKingSquare = prevState.blackKingSquare;
+    enPassantSquare = prevState.enPassantSquare;
+    halfmoveClock = prevState.halfmoveClock;
+    sideToMove = prevState.sideToMove;
+    zobristKey = prevState.zobristKey;
+    hasCachedInCheck = false;
+}
+
+#if 0
 bool BitBoard::applyMove(const Move &move, bool validateKingSafety) {
     Gamestate prevState = {
         sideToMove, 
@@ -746,6 +927,7 @@ bool BitBoard::applyMove(const Move &move, bool validateKingSafety) {
 
     sideToMove = (sideToMove == WHITE)? BLACK : WHITE;
     zobristKey ^= zobristBlackToMove;
+    hasCachedInCheck = false;
 
 
     if (validateKingSafety) {
@@ -770,6 +952,7 @@ bool BitBoard::applyMove(const Move &move, bool validateKingSafety) {
 
     return true;
 }
+#endif
 
 void BitBoard::unmakeMove(const Move &move, const Gamestate &prevState) {
     whiteKingsideCastle = prevState.whiteKingsideCastle;
@@ -833,6 +1016,7 @@ void BitBoard::unmakeMove(const Move &move, const Gamestate &prevState) {
     
         
     zobristKey = prevState.zobristKey;
+    hasCachedInCheck = false;
 }
 
 bool BitBoard::tryMove(const Move& move) {
@@ -948,5 +1132,6 @@ bool BitBoard::setPositionFromFEN(const std::string& fen) {
     }
     zobristKey = generateZobristHashKey(*this);
     pathDepth = 0;
+    hasCachedInCheck = false;
     return true;
 }
