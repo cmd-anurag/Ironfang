@@ -10,6 +10,7 @@
 #include "bitboard.h"
 #include "search.h"
 #include "opening_book.h"
+#include "evaluate.h"
 
 // bro why does c++ not have a built in trim function lol
 std::string trim(const std::string& s) {
@@ -76,7 +77,7 @@ void uciLoop() {
         iss >> token;
 
         if(token == "uci") {
-            printUciLine("id name Ironfangv18");
+            printUciLine("id name Ironfangv19");
             printUciLine("id author dark");
             printUciLine("option name RootDiagnostics type check default false");
             printUciLine("uciok");
@@ -277,6 +278,35 @@ void uciLoop() {
         }
         else if (token == "stop") {
             stopAndJoinSearch();
+        }
+        else if (token == "eval") {
+            stopAndJoinSearch();
+            const Evaluation::Breakdown breakdown = Evaluation::evaluateBreakdown(board);
+            std::ostringstream result;
+            result << "info string eval cp " << breakdown.score
+                   << " white material=" << breakdown.whiteMaterial
+                   << " pst=" << breakdown.whitePieceSquare
+                   << " pawn=" << breakdown.whitePawn
+                   << " shield=" << breakdown.whiteKingSafety
+                   << " mopup=" << breakdown.whiteMopUp
+                   << " black material=" << breakdown.blackMaterial
+                   << " pst=" << breakdown.blackPieceSquare
+                   << " pawn=" << breakdown.blackPawn
+                   << " shield=" << breakdown.blackKingSafety
+                   << " mopup=" << breakdown.blackMopUp;
+            printUciLine(result.str());
+        }
+        else if (token == "hash") {
+            stopAndJoinSearch();
+            printUciLine("info string hash " + std::to_string(board.zobristKey));
+        }
+        else if (token == "legalmoves") {
+            stopAndJoinSearch();
+            const std::vector<Move> moves = Search::diagnosticLegalMoves(board);
+            std::ostringstream result;
+            result << "info string legalmoves";
+            for (const Move& move : moves) result << ' ' << moveToUCI(move);
+            printUciLine(result.str());
         }
         else if (token == "quit") {
             stopAndJoinSearch();

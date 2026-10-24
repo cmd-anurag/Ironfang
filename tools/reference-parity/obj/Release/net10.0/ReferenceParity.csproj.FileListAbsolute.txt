@@ -1,0 +1,15 @@
+D:\playground\Ironfang\tools\reference-parity\bin\Release\net10.0\ReferenceParity.exe
+D:\playground\Ironfang\tools\reference-parity\bin\Release\net10.0\ReferenceParity.deps.json
+D:\playground\Ironfang\tools\reference-parity\bin\Release\net10.0\ReferenceParity.runtimeconfig.json
+D:\playground\Ironfang\tools\reference-parity\bin\Release\net10.0\ReferenceParity.dll
+D:\playground\Ironfang\tools\reference-parity\bin\Release\net10.0\ReferenceParity.pdb
+D:\playground\Ironfang\tools\reference-parity\obj\Release\net10.0\ReferenceParity.GeneratedMSBuildEditorConfig.editorconfig
+D:\playground\Ironfang\tools\reference-parity\obj\Release\net10.0\ReferenceParity.AssemblyInfoInputs.cache
+D:\playground\Ironfang\tools\reference-parity\obj\Release\net10.0\ReferenceParity.AssemblyInfo.cs
+D:\playground\Ironfang\tools\reference-parity\obj\Release\net10.0\ReferenceParity.csproj.CoreCompileInputs.cache
+D:\playground\Ironfang\tools\reference-parity\obj\Release\net10.0\ReferenceParity.sourcelink.json
+D:\playground\Ironfang\tools\reference-parity\obj\Release\net10.0\ReferenceParity.dll
+D:\playground\Ironfang\tools\reference-parity\obj\Release\net10.0\refint\ReferenceParity.dll
+D:\playground\Ironfang\tools\reference-parity\obj\Release\net10.0\ReferenceParity.pdb
+D:\playground\Ironfang\tools\reference-parity\obj\Release\net10.0\ReferenceParity.genruntimeconfig.cache
+D:\playground\Ironfang\tools\reference-parity\obj\Release\net10.0\ref\ReferenceParity.dll

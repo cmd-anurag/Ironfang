@@ -115,6 +115,20 @@ bool squareIsPinnedToKing(const ReferenceAttackData& attacks, int square) {
     return (attacks.pinRays & (1ULL << square)) != 0;
 }
 
+bool targetRemainsOnPinLine(int kingSquare, int fromSquare, int targetSquare) {
+    const int kingRank = kingSquare / 8;
+    const int kingFile = kingSquare & 7;
+    const int fromRankDelta = fromSquare / 8 - kingRank;
+    const int fromFileDelta = (fromSquare & 7) - kingFile;
+    const int targetRankDelta = targetSquare / 8 - kingRank;
+    const int targetFileDelta = (targetSquare & 7) - kingFile;
+
+    if (fromRankDelta == 0) return targetRankDelta == 0;
+    if (fromFileDelta == 0) return targetFileDelta == 0;
+    if (std::abs(fromRankDelta) != std::abs(fromFileDelta)) return false;
+    return fromRankDelta * targetFileDelta == fromFileDelta * targetRankDelta;
+}
+
 void calculateReferenceAttackData(const BitBoard& board, ReferenceAttackData& attacks) {
     attacks = {};
     const Color mover = board.sideToMove;
@@ -294,7 +308,16 @@ void generateReferenceMoves(const BitBoard& board, std::vector<Move>& moves,
     while (orthogonalSliders) {
         const int from = popReferenceLSB(orthogonalSliders);
         uint64_t destinations = board.getRookAttacks(from, allPieces) & moveMask;
-        if (squareIsPinnedToKing(attacks, from)) destinations &= attacks.pinRays;
+        if (squareIsPinnedToKing(attacks, from)) {
+            uint64_t legalDestinations = 0;
+            uint64_t candidates = destinations;
+            while (candidates) {
+                const int target = popReferenceLSB(candidates);
+                if (targetRemainsOnPinLine(kingSquare, from, target))
+                    legalDestinations |= 1ULL << target;
+            }
+            destinations = legalDestinations;
+        }
         const Piece piece = board.getPiece(from);
         while (destinations)
             addReferenceMove(board, moves, piece, from, popReferenceLSB(destinations));
@@ -303,7 +326,16 @@ void generateReferenceMoves(const BitBoard& board, std::vector<Move>& moves,
     while (diagonalSliders) {
         const int from = popReferenceLSB(diagonalSliders);
         uint64_t destinations = board.getBishopAttacks(from, allPieces) & moveMask;
-        if (squareIsPinnedToKing(attacks, from)) destinations &= attacks.pinRays;
+        if (squareIsPinnedToKing(attacks, from)) {
+            uint64_t legalDestinations = 0;
+            uint64_t candidates = destinations;
+            while (candidates) {
+                const int target = popReferenceLSB(candidates);
+                if (targetRemainsOnPinLine(kingSquare, from, target))
+                    legalDestinations |= 1ULL << target;
+            }
+            destinations = legalDestinations;
+        }
         const Piece piece = board.getPiece(from);
         while (destinations)
             addReferenceMove(board, moves, piece, from, popReferenceLSB(destinations));
@@ -335,7 +367,7 @@ void generateReferenceMoves(const BitBoard& board, std::vector<Move>& moves,
             const int target = popReferenceLSB(singlePushNoPromotions);
             const int from = target - forward;
             if (!squareIsPinnedToKing(attacks, from) ||
-                (attacks.pinRays & (1ULL << target)))
+                targetRemainsOnPinLine(kingSquare, from, target))
                 addReferenceMove(board, moves, pawn, from, target);
         }
 
@@ -345,7 +377,7 @@ void generateReferenceMoves(const BitBoard& board, std::vector<Move>& moves,
             const int target = popReferenceLSB(doublePush);
             const int from = target - forward * 2;
             if (!squareIsPinnedToKing(attacks, from) ||
-                (attacks.pinRays & (1ULL << target)))
+                targetRemainsOnPinLine(kingSquare, from, target))
                 addReferenceMove(board, moves, pawn, from, target);
         }
     }
@@ -369,14 +401,14 @@ void generateReferenceMoves(const BitBoard& board, std::vector<Move>& moves,
         const int target = popReferenceLSB(capturesA);
         const int from = target - captureAOffset;
         if (!squareIsPinnedToKing(attacks, from) ||
-            (attacks.pinRays & (1ULL << target)))
+            targetRemainsOnPinLine(kingSquare, from, target))
             addReferenceMove(board, moves, pawn, from, target);
     }
     while (capturesB) {
         const int target = popReferenceLSB(capturesB);
         const int from = target - captureBOffset;
         if (!squareIsPinnedToKing(attacks, from) ||
-            (attacks.pinRays & (1ULL << target)))
+            targetRemainsOnPinLine(kingSquare, from, target))
             addReferenceMove(board, moves, pawn, from, target);
     }
 
@@ -394,7 +426,7 @@ void generateReferenceMoves(const BitBoard& board, std::vector<Move>& moves,
         const int target = popReferenceLSB(capturePromotionsA);
         const int from = target - captureAOffset;
         if (!squareIsPinnedToKing(attacks, from) ||
-            (attacks.pinRays & (1ULL << target))) addPromotions(from, target);
+            targetRemainsOnPinLine(kingSquare, from, target)) addPromotions(from, target);
     }
     while (capturePromotionsB) {
         const int target = popReferenceLSB(capturePromotionsB);
@@ -412,16 +444,15 @@ void generateReferenceMoves(const BitBoard& board, std::vector<Move>& moves,
                 const int from = popReferenceLSB(pawnsThatCanCapture);
                 if (!(board.getPawnAttacks(from, mover) & (1ULL << target))) continue;
                 if (squareIsPinnedToKing(attacks, from) &&
-                    !(attacks.pinRays & (1ULL << target))) continue;
+                    !targetRemainsOnPinLine(kingSquare, from, target)) continue;
 
                 const uint64_t enemyOrthogonal =
                     (opponent == WHITE ? board.getWhiteRooks() : board.getBlackRooks()) |
                     (opponent == WHITE ? board.getWhiteQueens() : board.getBlackQueens());
                 if (enemyOrthogonal) {
-                    // Model occupancy after en passant: remove both pawns
-                    // from their source squares, then occupy the EP target.
-                    // The target is empty before the move, so it must be added
-                    // as a blocker for the discovered-rook check.
+                    // Model the reference's XOR occupancy update: the source
+                    // and captured pawns are removed, and the currently empty
+                    // EP destination is added as a blocker.
                     const uint64_t blockers =
                         (allPieces & ~((1ULL << capturedPawnSquare) | (1ULL << from))) |
                         (1ULL << target);
@@ -588,6 +619,13 @@ uint64_t transpositionKey(const BitBoard& board) {
 
 void Search::setRootDiagnostics(bool enabled) {
     rootDiagnosticsEnabled = enabled;
+}
+
+std::vector<Move> Search::diagnosticLegalMoves(const BitBoard& board) {
+    std::vector<Move> moves;
+    ReferenceAttackData attacks;
+    generateReferenceMoves(board, moves, false, attacks);
+    return moves;
 }
 
 void Search::newGame() {

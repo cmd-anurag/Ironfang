@@ -126,21 +126,29 @@ std::string OpeningBook::chooseMove(const BitBoard& board, int gamePly) {
     const auto found = book.movesByPosition.find(book.positionKey(board));
     if (found == book.movesByPosition.end() || found->second.empty()) return {};
 
-    std::vector<int> weights;
-    weights.reserve(found->second.size());
-    int totalWeight = 0;
+    int totalPlayCount = 0;
     for (const BookMove& move : found->second) {
-        const int weight = static_cast<int>(std::ceil(std::sqrt(move.playCount)));
-        weights.push_back(weight);
-        totalWeight += weight;
+        totalPlayCount += static_cast<int>(std::ceil(std::pow(move.playCount, 0.5)));
     }
 
-    std::uniform_real_distribution<double> distribution(0.0, static_cast<double>(totalWeight));
-    const double selection = distribution(randomGenerator());
-    double cumulativeWeight = 0.0;
+    std::vector<double> weights;
+    weights.reserve(found->second.size());
+    double weightSum = 0.0;
     for (size_t i = 0; i < found->second.size(); ++i) {
-        cumulativeWeight += weights[i];
-        if (selection <= cumulativeWeight) return found->second[i].uci;
+        const double weight = static_cast<int>(
+            std::ceil(std::pow(found->second[i].playCount, 0.5))) /
+            static_cast<double>(totalPlayCount);
+        weights.push_back(weight);
+        weightSum += weight;
+    }
+
+    std::uniform_real_distribution<double> distribution(0.0, 1.0);
+    const double selection = distribution(randomGenerator());
+    double cumulativeProbability = 0.0;
+    for (size_t i = 0; i < weights.size(); ++i) {
+        const double probability = weights[i] / weightSum;
+        cumulativeProbability += probability;
+        if (selection <= cumulativeProbability) return found->second[i].uci;
     }
     return found->second.back().uci;
 }

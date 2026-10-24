@@ -77,6 +77,8 @@ MaterialInfo getMaterialInfo(const BitBoard& board, Color side) {
 int pieceSquareScore(const BitBoard& board, Color side, float endgameT) {
     uint64_t pieces = side == WHITE ? board.getWhitePieces() : board.getBlackPieces();
     int score = 0;
+    int pawnEarlyScore = 0;
+    int pawnLateScore = 0;
 
     while (pieces) {
         const int square = board.popLSB(pieces);
@@ -85,10 +87,8 @@ int pieceSquareScore(const BitBoard& board, Color side, float endgameT) {
         const int tableSquare = side == WHITE ? square : Evaluation::mirror(square);
 
         if (pieceType == 1) {
-            const int early = pawnPST[tableSquare];
-            const int late = pawnEgPST[tableSquare];
-            score += static_cast<int>(early * (1.0f - endgameT));
-            score += static_cast<int>(late * endgameT);
+            pawnEarlyScore += pawnPST[tableSquare];
+            pawnLateScore += pawnEgPST[tableSquare];
         } else if (pieceType == 6) {
             const int early = kingMdPST[tableSquare];
             const int late = kingEgPST[tableSquare];
@@ -98,6 +98,12 @@ int pieceSquareScore(const BitBoard& board, Color side, float endgameT) {
             score += PST[pieceType - 1][tableSquare];
         }
     }
+
+    // The reference sums each pawn table first, then applies the phase
+    // weights and truncates once per phase. Truncating per pawn changes the
+    // evaluator by several centipawns in multi-pawn positions.
+    score += static_cast<int>(pawnEarlyScore * (1.0f - endgameT));
+    score += static_cast<int>(pawnLateScore * endgameT);
 
     return score;
 }
@@ -136,8 +142,12 @@ int pawnScore(const BitBoard& board, Color side) {
         pawns &= pawns - 1;
 
         const int file = square & 7;
-        if ((enemyPawns & passedSpan[square] &
-             (FILES[file] | ADJACENT_FILES[file])) == 0) {
+        const uint64_t forwardSameFile = passedSpan[square];
+        const uint64_t forwardAdjacentFiles =
+            ((forwardSameFile & ~FILES[0]) >> 1) |
+            ((forwardSameFile & ~FILES[7]) << 1);
+        const uint64_t passedMask = forwardSameFile | forwardAdjacentFiles;
+        if ((enemyPawns & passedMask) == 0) {
             const int boardRank = square / 8;
             const int squaresFromPromotion = side == WHITE ? boardRank : 7 - boardRank;
             const int bonusIndex = std::clamp(squaresFromPromotion, 0, 6);
@@ -225,7 +235,10 @@ int kingPawnShield(const BitBoard& board, Color kingSide,
 }
 }
 
-int Evaluation::evaluate(const BitBoard& board) {
+namespace {
+template<bool CaptureBreakdown>
+int evaluateScore(const BitBoard& board,
+                  [[maybe_unused]] Evaluation::Breakdown* breakdown) {
     const MaterialInfo whiteMaterial = getMaterialInfo(board, WHITE);
     const MaterialInfo blackMaterial = getMaterialInfo(board, BLACK);
 
@@ -234,17 +247,42 @@ int Evaluation::evaluate(const BitBoard& board) {
     const int whitePieceSquare = pieceSquareScore(board, WHITE, blackMaterial.endgameT);
     const int blackPieceSquare = pieceSquareScore(board, BLACK, whiteMaterial.endgameT);
 
-    const int whiteScore = whiteMaterial.materialScore +
-        whitePieceSquare +
-        mopUpScore(board, WHITE, whiteMaterial, blackMaterial) +
-        pawnScore(board, WHITE) +
-        kingPawnShield(board, WHITE, blackMaterial, blackPieceSquare);
-    const int blackScore = blackMaterial.materialScore +
-        blackPieceSquare +
-        mopUpScore(board, BLACK, blackMaterial, whiteMaterial) +
-        pawnScore(board, BLACK) +
-        kingPawnShield(board, BLACK, whiteMaterial, whitePieceSquare);
+    const int whiteMopUp = mopUpScore(board, WHITE, whiteMaterial, blackMaterial);
+    const int whitePawn = pawnScore(board, WHITE);
+    const int whiteKingSafety = kingPawnShield(board, WHITE, blackMaterial, blackPieceSquare);
+    const int blackMopUp = mopUpScore(board, BLACK, blackMaterial, whiteMaterial);
+    const int blackPawn = pawnScore(board, BLACK);
+    const int blackKingSafety = kingPawnShield(board, BLACK, whiteMaterial, whitePieceSquare);
 
-    const int score = whiteScore - blackScore;
-    return board.sideToMove == WHITE ? score : -score;
+    const int whiteScore = whiteMaterial.materialScore + whitePieceSquare +
+        whiteMopUp + whitePawn + whiteKingSafety;
+    const int blackScore = blackMaterial.materialScore + blackPieceSquare +
+        blackMopUp + blackPawn + blackKingSafety;
+    const int score = board.sideToMove == WHITE ? whiteScore - blackScore : blackScore - whiteScore;
+
+    if constexpr (CaptureBreakdown) {
+        breakdown->whiteMaterial = whiteMaterial.materialScore;
+        breakdown->whitePieceSquare = whitePieceSquare;
+        breakdown->whiteMopUp = whiteMopUp;
+        breakdown->whitePawn = whitePawn;
+        breakdown->whiteKingSafety = whiteKingSafety;
+        breakdown->blackMaterial = blackMaterial.materialScore;
+        breakdown->blackPieceSquare = blackPieceSquare;
+        breakdown->blackMopUp = blackMopUp;
+        breakdown->blackPawn = blackPawn;
+        breakdown->blackKingSafety = blackKingSafety;
+        breakdown->score = score;
+    }
+    return score;
+}
+}
+
+int Evaluation::evaluate(const BitBoard& board) {
+    return evaluateScore<false>(board, nullptr);
+}
+
+Evaluation::Breakdown Evaluation::evaluateBreakdown(const BitBoard& board) {
+    Breakdown breakdown;
+    evaluateScore<true>(board, &breakdown);
+    return breakdown;
 }

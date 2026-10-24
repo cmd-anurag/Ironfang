@@ -3,6 +3,7 @@
 
 #include "bitboard.h"
 #include <mutex>
+#include <vector>
 
 constexpr int INF = 9999999;                     // Match the reference's search window
 constexpr int MATE_SCORE = 100000;               // Base mate score
@@ -17,6 +18,7 @@ class Search {
     public:
 
         static Move findBestMove(BitBoard &board, int depth, int timeLimit);
+        static std::vector<Move> diagnosticLegalMoves(const BitBoard& board);
         static void setRootDiagnostics(bool enabled);
         static void newGame();
         static void clearStopRequest();
