@@ -5,7 +5,6 @@
 #include <cstdlib> 
 #include <ctime>
 #include <algorithm>
-#include "board.h"
 #include "bitboard.h"
 #include "search.h"
 
@@ -59,7 +58,7 @@ void uciLoop() {
         iss >> token;
 
         if(token == "uci") {
-            std::cout << "id name Ironfangv15\n" << std::flush;
+            std::cout << "id name Ironfangv16\n" << std::flush;
             std::cout << "id author dark\n" << std::flush;
             std::cout << "option name RootDiagnostics type check default false\n" << std::flush;
             std::cout << "uciok\n" << std::flush;
@@ -82,6 +81,7 @@ void uciLoop() {
             board.setStartPosition();
             lastFEN.clear();
             lastUCIMoves.clear();
+            Search::newGame();
         }
         else if (token == "position") {
             std::string sub;
@@ -178,7 +178,7 @@ void uciLoop() {
             int requestedDepth = -1;
             int wtime = -1, btime = -1;
             int winc = 0, binc = 0;
-            int movestogo = 30; // Default assumption
+            int movestogo = 0; // Zero means the GUI did not provide a move horizon.
             
             std::string subtoken;
             while (iss >> subtoken) {
@@ -218,25 +218,27 @@ void uciLoop() {
                 int increment = (board.sideToMove == WHITE) ? winc : binc;
                 int pieceCount = 0;
                 
-                // More aggressive time allocation strategy
+                // Use a stage-dependent horizon only when the GUI omitted one.
+                // Assuming 30 moves for every game overallocates early moves
+                // in increment controls such as 1+1 bullet.
                 if (movestogo > 0) {
-                    // If we know moves to go, allocate more time per move
-                    timeForMove = (timeLeft / movestogo) + increment;  // Removed +1 from divisor, use full increment
+                    timeForMove = (timeLeft / movestogo) + (increment * 3) / 4;
                 } else {
-                    // Use more aggressive estimates for remaining moves
                     uint64_t allPieces = board.getAllPieces();
                     pieceCount = __builtin_popcountll(allPieces);
                     
                     int estimatedMoves;
                     if (pieceCount > 24) {
-                        estimatedMoves = 30; // Early game (was 40)
+                        estimatedMoves = 40;
                     } else if (pieceCount > 12) {
-                        estimatedMoves = 20; // Middle game (was 30)
+                        estimatedMoves = 28;
                     } else {
-                        estimatedMoves = 12; // Endgame (was 20)
+                        estimatedMoves = 18;
                     }
-                    
-                    timeForMove = (timeLeft / estimatedMoves) + increment; // Use full increment
+
+                    // Reserve part of the increment so one difficult move does
+                    // not make the remaining bullet clock unsustainable.
+                    timeForMove = (timeLeft / estimatedMoves) + (increment * 3) / 4;
                 }
                 
                 // More aggressive safety margin - allow up to 25% of remaining time (was ~14%)
@@ -245,10 +247,6 @@ void uciLoop() {
                 
                 
 
-                // Give extra time in the opening to prepare strategic advantage
-                if (pieceCount > 28) {
-                    timeForMove = static_cast<int>(timeForMove * 1.3);
-                }
             }
             
             // Set a dynamic maximum depth based on time

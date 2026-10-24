@@ -24,10 +24,11 @@ namespace {
 constexpr uint64_t TIME_CHECK_NODE_INTERVAL = 1024;
 constexpr uint64_t HALF_MOVE_TT_SALT = 0x9e3779b97f4a7c15ULL;
 constexpr int HASH_MOVE_SCORE = 100000000;
-constexpr int WINNING_CAPTURE_BIAS = 8000000;
-constexpr int PROMOTION_BIAS = 6000000;
-constexpr int KILLER_MOVE_BIAS = 4000000;
-constexpr int LOSING_CAPTURE_BIAS = 2000000;
+constexpr int WINNING_CAPTURE_BIAS = 2000000;
+constexpr int LOSING_CAPTURE_PENALTY = 1200000;
+constexpr int PROMOTION_BIAS = 4000000;
+constexpr int KILLER_MOVE_BIAS = 1500000;
+constexpr int MAX_QUIESCENCE_PLY = 32;
 std::array<std::array<Move, MAX_PLY>, MAX_PLY> pvTable{};
 std::array<int, MAX_PLY> pvLength{};
 std::array<std::vector<Move>, MAX_PLY> searchMoveBuffers;
@@ -37,6 +38,9 @@ bool searchStoppedByTime = false;
 bool rootDiagnosticsEnabled = false;
 uint64_t lateMoveReductionCount = 0;
 uint64_t lateMoveResearchCount = 0;
+uint64_t pvsResearchCount = 0;
+uint64_t nullMoveTryCount = 0;
+uint64_t nullMoveCutoffCount = 0;
 uint64_t repetitionPathEntriesScanned = 0;
 
 int squareForPieceSquareTable(Piece piece, int square) {
@@ -67,40 +71,11 @@ int countCurrentRepetitionOccurrences(const BitBoard& board) {
     return occurrences;
 }
 
-struct AttackMaps {
-    uint64_t all = 0;
-    uint64_t pawns = 0;
-};
-
-AttackMaps attacksForSide(const BitBoard& board, Color side) {
-    AttackMaps maps;
-    const uint64_t occupied = board.getAllPieces();
-    uint64_t pieces = side == WHITE ? board.getWhitePawns() : board.getBlackPawns();
-    while (pieces) {
-        const int square = board.popLSB(pieces);
-        maps.pawns |= board.getPawnAttacks(square, side);
-    }
-    maps.all |= maps.pawns;
-
-    pieces = side == WHITE ? board.getWhiteKnights() : board.getBlackKnights();
-    while (pieces) maps.all |= board.getKnightAttacks(board.popLSB(pieces));
-    pieces = side == WHITE ? board.getWhiteBishops() : board.getBlackBishops();
-    while (pieces) maps.all |= board.getBishopAttacks(board.popLSB(pieces), occupied);
-    pieces = side == WHITE ? board.getWhiteRooks() : board.getBlackRooks();
-    while (pieces) maps.all |= board.getRookAttacks(board.popLSB(pieces), occupied);
-    pieces = side == WHITE ? board.getWhiteQueens() : board.getBlackQueens();
-    while (pieces) maps.all |= board.getQueenAttacks(board.popLSB(pieces), occupied);
-    const int kingSquare = side == WHITE ? board.whiteKingSquare : board.blackKingSquare;
-    maps.all |= board.getKingAttacks(kingSquare);
-    return maps;
-}
-
 void orderMoves(BitBoard& board, std::vector<Move>& moves, const Move& hashMove,
                 bool inQuiescence, int ply) {
     const Color mover = board.sideToMove;
     const Color opponent = mover == WHITE ? BLACK : WHITE;
     const size_t sideIndex = static_cast<size_t>(mover);
-    const AttackMaps opponentAttacks = attacksForSide(board, opponent);
 
     for (Move& move : moves) {
         int score = 0;
@@ -114,18 +89,23 @@ void orderMoves(BitBoard& board, std::vector<Move>& moves, const Move& hashMove,
         const int movingType = move.piece & 7;
         const int movingValue = Evaluation::pieceValue[movingType];
         if (isCapture) {
-            const int capturedType = move.capture & 7;
+            const Piece capturedPiece = move.isEnPassant
+                ? (mover == WHITE ? BP : WP)
+                : static_cast<Piece>(move.capture);
+            const int capturedType = capturedPiece & 7;
             const int captureDelta = Evaluation::pieceValue[capturedType] - movingValue;
-            const uint64_t targetMask = 1ULL << move.to;
-            const bool attacked = (opponentAttacks.all & targetMask) != 0;
-            score += attacked
-                ? (captureDelta >= 0 ? WINNING_CAPTURE_BIAS : LOSING_CAPTURE_BIAS) + captureDelta
-                : WINNING_CAPTURE_BIAS + captureDelta;
+            // Captures are ordered MVV-LVA style. A targeted attack query is
+            // much cheaper than rebuilding every enemy attack map at every
+            // node, and helps defer obviously losing captures.
+            const bool attacked = board.isSquareAttacked(move.to, opponent);
+            score += WINNING_CAPTURE_BIAS + capturedType * 1000 - movingType * 100;
+            if (attacked && captureDelta < 0) score -= LOSING_CAPTURE_PENALTY;
         }
 
         if (movingType == 1) {
-            if (!isCapture && move.promotion && (move.promotion & 7) == 5)
-                score += PROMOTION_BIAS;
+            if (move.promotion)
+                score += PROMOTION_BIAS + Evaluation::pieceValue[move.promotion & 7] -
+                         Evaluation::pieceValue[1];
         } else if (movingType != 6) {
             const int tableIndex = movingType - 1;
             if (tableIndex >= 0 && tableIndex < 5) {
@@ -135,13 +115,6 @@ void orderMoves(BitBoard& board, std::vector<Move>& moves, const Move& hashMove,
             }
         }
 
-        if (movingType != 1 && movingType != 6) {
-            const uint64_t targetMask = 1ULL << move.to;
-            const bool pawnAttacked = (opponentAttacks.pawns & targetMask) != 0;
-            if (pawnAttacked) score -= 50;
-            else if (opponentAttacks.all & targetMask) score -= 25;
-        }
-
         if (!isCapture) {
             if (!inQuiescence && ply >= 0 && ply < static_cast<int>(killerMoves.size())) {
                 if (move == killerMoves[ply][0]) score += KILLER_MOVE_BIAS;
@@ -149,6 +122,7 @@ void orderMoves(BitBoard& board, std::vector<Move>& moves, const Move& hashMove,
             }
             if (move.from >= 0 && move.from < 64 && move.to >= 0 && move.to < 64)
                 score += historyHeuristics[sideIndex][move.from][move.to];
+            if (move.isKingSideCastle || move.isQueenSideCastle) score += 100;
         }
 
         move.heuristicScore = score;
@@ -267,15 +241,98 @@ bool adjudicateFiftyMoveRule(BitBoard& board, int ply, int& score) {
     score = -MATE_SCORE + ply;
     return true;
 }
+
+bool hasNullMoveMaterial(const BitBoard& board, Color side) {
+    const uint64_t rooks = side == WHITE ? board.getWhiteRooks() : board.getBlackRooks();
+    const uint64_t queens = side == WHITE ? board.getWhiteQueens() : board.getBlackQueens();
+    if (rooks || queens) return true;
+
+    const uint64_t knights = side == WHITE ? board.getWhiteKnights() : board.getBlackKnights();
+    const uint64_t bishops = side == WHITE ? board.getWhiteBishops() : board.getBlackBishops();
+    return __builtin_popcountll(knights | bishops) >= 2;
+}
+
+bool isInsufficientMaterial(const BitBoard& board) {
+    if (board.getWhitePawns() || board.getBlackPawns() ||
+        board.getWhiteRooks() || board.getBlackRooks() ||
+        board.getWhiteQueens() || board.getBlackQueens()) {
+        return false;
+    }
+
+    const uint64_t whiteKnights = board.getWhiteKnights();
+    const uint64_t blackKnights = board.getBlackKnights();
+    const uint64_t whiteBishops = board.getWhiteBishops();
+    const uint64_t blackBishops = board.getBlackBishops();
+    const int minorCount = __builtin_popcountll(
+        whiteKnights | blackKnights | whiteBishops | blackBishops);
+
+    if (minorCount <= 1) return true;
+
+    // K+B vs K+B on the same square colour cannot produce checkmate.
+    if (!whiteKnights && !blackKnights &&
+        __builtin_popcountll(whiteBishops) == 1 &&
+        __builtin_popcountll(blackBishops) == 1) {
+        const int whiteSquare = __builtin_ctzll(whiteBishops);
+        const int blackSquare = __builtin_ctzll(blackBishops);
+        const int whiteColour = ((whiteSquare / 8) + (whiteSquare % 8)) & 1;
+        const int blackColour = ((blackSquare / 8) + (blackSquare % 8)) & 1;
+        return whiteColour == blackColour;
+    }
+
+    return false;
+}
 }
 
 void Search::setRootDiagnostics(bool enabled) {
     rootDiagnosticsEnabled = enabled;
 }
 
+void Search::newGame() {
+    TT.clear();
+    historyHeuristics = {};
+    for (auto& killersAtPly : killerMoves) {
+        killersAtPly[0] = Move(NONE, -1, -1);
+        killersAtPly[1] = Move(NONE, -1, -1);
+    }
+}
+
 static int scoreToTT(int score, int ply) {
     if (score >= MATE_THRESHOLD) return score + ply;
     if (score <= -MATE_THRESHOLD) return score - ply;
+    return score;
+}
+
+int Search::searchChild(BitBoard& board, int childDepth, int alpha, int beta,
+                        int ply, int numExtensions, bool firstMove,
+                        bool reduceMove, bool fullWindow,
+                        bool allowRepetitionDraws, bool allowNullMove) {
+    auto search = [&](int depth, int childAlpha, int childBeta) {
+        return -minimaxAlphaBeta(board, depth, childAlpha, childBeta, ply,
+                                 numExtensions, allowRepetitionDraws, allowNullMove);
+    };
+
+    if (fullWindow) return search(childDepth, -INF, INF);
+    if (firstMove) return search(childDepth, -beta, -alpha);
+
+    if (reduceMove) {
+        ++lateMoveReductionCount;
+        int score = search(childDepth - 1, -alpha - 1, -alpha);
+        if (searchStoppedByTime || score <= alpha) return score;
+
+        ++lateMoveResearchCount;
+        score = search(childDepth, -alpha - 1, -alpha);
+        if (!searchStoppedByTime && score > alpha && score < beta) {
+            ++pvsResearchCount;
+            score = search(childDepth, -beta, -alpha);
+        }
+        return score;
+    }
+
+    int score = search(childDepth, -alpha - 1, -alpha);
+    if (!searchStoppedByTime && score > alpha && score < beta) {
+        ++pvsResearchCount;
+        score = search(childDepth, -beta, -alpha);
+    }
     return score;
 }
 
@@ -289,9 +346,18 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     selectiveDepth = 0;
     lateMoveReductionCount = 0;
     lateMoveResearchCount = 0;
+    pvsResearchCount = 0;
+    nullMoveTryCount = 0;
+    nullMoveCutoffCount = 0;
     repetitionPathEntriesScanned = 0;
     pvLength.fill(0);
-    historyHeuristics = {};
+    // Keep useful quiet-move ordering between turns, but decay old scores so
+    // one position cannot dominate the rest of the game.
+    for (auto& sideHistory : historyHeuristics) {
+        for (auto& fromHistory : sideHistory) {
+            for (int& score : fromHistory) score = (score * 7) / 8;
+        }
+    }
     TT.lookupCount = 0;
     TT.hitCount = 0;
     TT.keyMatchCount = 0;
@@ -320,6 +386,9 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
                   << " first_move_cutoffs=" << firstMoveCutoffCount
                   << " lmr_reductions=" << lateMoveReductionCount
                   << " lmr_researches=" << lateMoveResearchCount
+                  << " pvs_researches=" << pvsResearchCount
+                  << " null_move_tries=" << nullMoveTryCount
+                  << " null_move_cutoffs=" << nullMoveCutoffCount
                   << " repetition_scan_entries=" << repetitionPathEntriesScanned;
         if (searchStoppedByTime) {
             std::cout << " stop=hard_time";
@@ -355,6 +424,12 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
         }
         board.repetitionPath[board.pathDepth++] = board.zobristKey;
     }
+
+    const int rootKingSquare = board.sideToMove == WHITE
+        ? board.whiteKingSquare
+        : board.blackKingSquare;
+    const Color rootOpponent = board.sideToMove == WHITE ? BLACK : WHITE;
+    const bool rootInCheck = board.isSquareAttacked(rootKingSquare, rootOpponent);
     
     // Set a default move immediately for safety
     bool hasLegalRootMove = false;
@@ -414,8 +489,8 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
         // counted over successfully made (legal) moves, like the reference's
         // legal move list.
         size_t legalRootMoveCount = 0;
-        // Match the reference's full alpha-beta root search. The root window
-        // narrows as alpha improves; it does not use a separate PVS probe.
+        // Search the first legal move with the full current window, then use
+        // PVS null-window probes for later candidates.
         for (size_t rootMoveIndex = 0; rootMoveIndex < moves.size(); ++rootMoveIndex) {
             const Move& move = moves[rootMoveIndex];
             Gamestate prevdata = {
@@ -451,26 +526,13 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
             const uint64_t nodesBefore = nodeCount;
             const uint64_t reductionsBefore = lateMoveReductionCount;
             const uint64_t researchesBefore = lateMoveResearchCount;
-            int score;
             const bool isCapture = move.capture != NONE || move.isEnPassant;
-            const bool reduceRootMove = !rootDiagnosticsEnabled && depth >= 3 &&
-                legalRootMoveIndex >= 3 && rootExtension == 0 && !isCapture;
-            if (reduceRootMove) {
-                ++lateMoveReductionCount;
-                score = -minimaxAlphaBeta(board, depth - 2, -alpha - 1, -alpha,
-                                          1, rootExtension);
-                if (!searchStoppedByTime && score > alpha) {
-                    ++lateMoveResearchCount;
-                    score = -minimaxAlphaBeta(board, depth - 1 + rootExtension,
-                                              -beta, -alpha, 1, rootExtension);
-                }
-            } else if (rootDiagnosticsEnabled) {
-                score = -minimaxAlphaBeta(board, depth - 1 + rootExtension,
-                                          -INF, INF, 1, rootExtension);
-            } else {
-                score = -minimaxAlphaBeta(board, depth - 1 + rootExtension,
-                                          -beta, -alpha, 1, rootExtension);
-            }
+            const bool reduceRootMove = !rootDiagnosticsEnabled && !rootInCheck &&
+                depth >= 3 && legalRootMoveIndex >= 3 && rootExtension == 0 && !isCapture;
+            const int score = searchChild(
+                board, depth - 1 + rootExtension, alpha, beta, 1, rootExtension,
+                legalRootMoveIndex == 0, reduceRootMove, rootDiagnosticsEnabled,
+                true, true);
 
             std::array<Move, MAX_PLY> candidatePV{};
             int candidatePVLength = 1;
@@ -561,6 +623,10 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
             std::cout << ' ' << moveToUCI(bestPV[index]);
         }
         std::cout << "\n" << std::flush;
+
+        // A proven forced win cannot be improved by searching for a longer
+        // line. Stop now so the remaining clock is available for later moves.
+        if (bestScore >= MATE_THRESHOLD) break;
     }
 
     emitSearchStats();
@@ -568,7 +634,8 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
 }
 
 int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, int ply,
-                             int numExtensions) {
+                             int numExtensions, bool allowRepetitionDraws,
+                             bool allowNullMove) {
     ++nodeCount; // an efficiency metric
     selectiveDepth = std::max(selectiveDepth, ply);
     if (ply < MAX_PLY) {
@@ -591,8 +658,15 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     board.repetitionPath[board.pathDepth++] = board.zobristKey;
     assert(board.pathDepth <= 1024);
 
-    const int repetitionOccurrences = countCurrentRepetitionOccurrences(board);
-    if (repetitionOccurrences >= 3) {
+    const int repetitionOccurrences = allowRepetitionDraws
+        ? countCurrentRepetitionOccurrences(board)
+        : 1;
+    if (allowRepetitionDraws && repetitionOccurrences >= 3) {
+        --board.pathDepth;
+        return 0;
+    }
+
+    if (isInsufficientMaterial(board)) {
         --board.pathDepth;
         return 0;
     }
@@ -620,14 +694,62 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     // A cached score can depend on a different repetition history. Keep the
     // TT move for ordering, but search this node when it has occurred before.
     if (TT.probe(transpositionKey(board), depth, alpha, beta, ply, tempEval, tempMove,
-                 repetitionOccurrences == 1)) {
+                 allowRepetitionDraws && repetitionOccurrences == 1)) {
         --board.pathDepth;
         return tempEval;
     }
 
     if (depth <= 0) {
         --board.pathDepth;
-        return quiescenceSearch(board, alpha, beta, 0, ply);
+        return quiescenceSearch(board, alpha, beta, 0, ply, allowRepetitionDraws);
+    }
+
+    const int kingSquare = board.sideToMove == WHITE
+        ? board.whiteKingSquare
+        : board.blackKingSquare;
+    const Color opponent = board.sideToMove == WHITE ? BLACK : WHITE;
+    const bool inCheck = board.isSquareAttacked(kingSquare, opponent);
+
+    // Conservative null-move pruning: only try it in non-check positions,
+    // away from the fifty-move boundary, and when the side has enough material
+    // to make zugzwang unlikely. The artificial null line is excluded from
+    // repetition and TT score reuse because null moves are not legal history.
+    if (allowNullMove && allowRepetitionDraws && depth >= 3 && !inCheck &&
+        board.halfmoveClock < 90 && beta < MATE_THRESHOLD &&
+        alpha > -MATE_THRESHOLD && hasNullMoveMaterial(board, board.sideToMove) &&
+        Evaluation::evaluate(board) >= beta) {
+        ++nullMoveTryCount;
+        const Color previousSide = board.sideToMove;
+        const int previousEnPassant = board.enPassantSquare;
+        const uint64_t previousKey = board.zobristKey;
+
+        if (board.enPassantSquare != -1) {
+            board.zobristKey ^= zobristEnPassant[board.enPassantSquare & 7];
+        }
+        board.enPassantSquare = -1;
+        board.sideToMove = board.sideToMove == WHITE ? BLACK : WHITE;
+        board.zobristKey ^= zobristBlackToMove;
+
+        const int reduction = 2 + depth / 6;
+        const int nullMoveScore = -minimaxAlphaBeta(
+            board, depth - 1 - reduction, -beta, -beta + 1,
+            ply + 1, numExtensions, false, false);
+
+        board.sideToMove = previousSide;
+        board.enPassantSquare = previousEnPassant;
+        board.zobristKey = previousKey;
+
+        if (searchStoppedByTime) {
+            --board.pathDepth;
+            return 0;
+        }
+        if (nullMoveScore >= beta) {
+            ++nullMoveCutoffCount;
+            TT.store(transpositionKey(board), depth, scoreToTT(beta, ply),
+                     TT_LOWER, tempMove);
+            --board.pathDepth;
+            return beta;
+        }
     }
 
     std::vector<Move>& moves = searchMoveBuffers[ply];
@@ -688,23 +810,13 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
 
         const bool isCapture = move.capture != NONE || move.isEnPassant;
         // legalMoveIndex excludes pseudo-legal moves rejected by makeMove.
-        const bool reduceMove = extension == 0 && depth >= 3 && legalMoveIndex >= 3 &&
-            !isCapture;
+        const bool reduceMove = !inCheck && extension == 0 && depth >= 3 &&
+            legalMoveIndex >= 3 && !isCapture;
 
-        int score;
-        if (reduceMove) {
-            ++lateMoveReductionCount;
-            score = -minimaxAlphaBeta(board, depth - 2, -alpha - 1, -alpha,
-                                      ply + 1, numExtensions);
-            if (!searchStoppedByTime && score > alpha) {
-                ++lateMoveResearchCount;
-                score = -minimaxAlphaBeta(board, depth - 1 + extension, -beta, -alpha,
-                                          ply + 1, numExtensions + extension);
-            }
-        } else {
-            score = -minimaxAlphaBeta(board, depth - 1 + extension, -beta, -alpha,
-                                      ply + 1, numExtensions + extension);
-        }
+        const int score = searchChild(
+            board, depth - 1 + extension, alpha, beta, ply + 1,
+            numExtensions + extension, legalMoveIndex == 0, reduceMove, false,
+            allowRepetitionDraws, allowNullMove);
         board.unmakeMove(move, prevdata);
         ++legalMoveIndex;
 
@@ -729,7 +841,9 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
                 int& history = historyHeuristics[sideIndex][move.from][move.to];
                 history = std::min(100000, history + depth * depth);
             }
-            TT.store(transpositionKey(board), depth, scoreToTT(beta, ply), TT_LOWER, move);
+            if (allowRepetitionDraws) {
+                TT.store(transpositionKey(board), depth, scoreToTT(beta, ply), TT_LOWER, move);
+            }
 
             --board.pathDepth;
             return beta;
@@ -753,7 +867,10 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         ? -MATE_SCORE + ply  // checkmate
         : 0;             // stalemate
 
-        TT.store(transpositionKey(board), depth, scoreToTT(eval, ply), TT_EXACT, Move(NONE, -1, -1));
+        if (allowRepetitionDraws) {
+            TT.store(transpositionKey(board), depth, scoreToTT(eval, ply),
+                     TT_EXACT, Move(NONE, -1, -1));
+        }
         --board.pathDepth;
         return eval;
     }
@@ -766,12 +883,15 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         flag = TT_EXACT;
     }
 
-    TT.store(transpositionKey(board), depth, scoreToTT(alpha, ply), flag, bestMove);
+    if (allowRepetitionDraws) {
+        TT.store(transpositionKey(board), depth, scoreToTT(alpha, ply), flag, bestMove);
+    }
     --board.pathDepth;
     return alpha;
 }
 
-int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, int ply) {
+int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, int ply,
+                             bool allowRepetitionDraws) {
     ++nodeCount;
     ++quiescenceNodeCount;
     selectiveDepth = std::max(selectiveDepth, ply);
@@ -782,8 +902,15 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
     if (board.pathDepth >= 1024) return Evaluation::evaluate(board);
 
     board.repetitionPath[board.pathDepth++] = board.zobristKey;
-    const int repetitionOccurrences = countCurrentRepetitionOccurrences(board);
-    if (repetitionOccurrences >= 3) {
+    const int repetitionOccurrences = allowRepetitionDraws
+        ? countCurrentRepetitionOccurrences(board)
+        : 1;
+    if (allowRepetitionDraws && repetitionOccurrences >= 3) {
+        --board.pathDepth;
+        return 0;
+    }
+
+    if (isInsufficientMaterial(board)) {
         --board.pathDepth;
         return 0;
     }
@@ -806,6 +933,14 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
         : board.blackKingSquare;
     const Color opponent = board.sideToMove == WHITE ? BLACK : WHITE;
     const bool inCheck = board.isSquareAttacked(kingSquare, opponent);
+
+    // Bound capture/check sequences so a perpetual tactical line cannot consume
+    // the whole move clock. Check evasions remain mandatory even past this cap.
+    if (!inCheck && qdepth >= MAX_QUIESCENCE_PLY) {
+        const int eval = Evaluation::evaluate(board);
+        --board.pathDepth;
+        return eval;
+    }
 
     if (!inCheck) {
         const int standPat = Evaluation::evaluate(board);
@@ -838,7 +973,8 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int qdepth, i
 
         if (!board.makeMove(move)) continue;
         foundLegalMove = true;
-        const int score = -quiescenceSearch(board, -beta, -alpha, qdepth + 1, ply + 1);
+        const int score = -quiescenceSearch(board, -beta, -alpha, qdepth + 1,
+                                            ply + 1, allowRepetitionDraws);
         board.unmakeMove(move, previousState);
 
         if (searchStoppedByTime) {

@@ -58,3 +58,34 @@ move LMR-index correction. The six-position generic depth-8 suite also retained
 all moves, scores, and node counts; median NPS was 3.1% higher in this single
 run, which is too small to treat as a confirmed speedup. The CSVs preserve both
 runs for later comparison.
+
+## v15 fixed-position check against Stockfish 19
+
+This diagnostic used the three same FENs with a 5-second UCI move-time budget.
+Stockfish 19 ran with its default single thread and 16 MiB hash. Ironfang keeps
+its 128 MiB TT and its 5% hard-time safety margin, so its actual search deadline
+was about 4.75 seconds. The comparison is for tactical reference, not a claim
+that Stockfish is a strength-equivalent opponent.
+
+| Position | Ironfang v15 move / score / completed depth | Stockfish 19 move / score / depth |
+|---|---:|---:|
+| After `2...b6` | `d2d4`, +1.05, d9 | `d2d4`, +0.80, d27 |
+| After `12...Re8` | `c2c4`, +0.95, d9 | `f2f4`, +3.18, d24 |
+| After `24...Qa2` | `c2c3`, +0.63, d8 | `f4f5`, +8.75, d28 |
+
+The Stockfish depth-20 run chose the same three moves, so those reference moves
+are now recorded in `reference-v14-positions.csv` for subsequent bench runs.
+Ironfang's reported NPS was roughly 0.96–1.06 million, while Stockfish's was
+0.76–0.79 million; raw NPS across different engines is not a strength measure.
+The much larger completed-depth gap means raw NPS optimization alone cannot
+explain these misses. On the conversion FEN, Ironfang still chose `c2c3` at
+depth 10 after a 20-second budget, while Stockfish chose `f4f5` at depth 28
+within 5 seconds. This confirms a search/evaluation gap on this position, but
+does not isolate which component is responsible because the engines use very
+different search selectivity and evaluation.
+
+Raw UCI captures are saved as `stockfish-reference-d20.csv`,
+`stockfish-reference-5000ms.csv`, `reference-v14-v15-5000ms.csv`, and
+`reference-v14-v15-conversion-20000ms.csv`. No engine source was changed for
+this measurement; keep the current v15 build as the match candidate until the
+color-swapped reference games provide a strength result.

@@ -31,8 +31,21 @@ endif()
 # Include  headers
 include_directories(include)
 
-# Collect all .cpp files from src/
-file(GLOB SOURCES "src/*.cpp")
+# Build the active bitboard engine explicitly. The old mailbox Board sources
+# remain in the repository as legacy code, but are not part of the UCI engine.
+set(SOURCES
+    src/bitboard.cpp
+    src/evaluate.cpp
+    src/main.cpp
+    src/magic.cpp
+    src/move.cpp
+    src/precomputedEvalTables.cpp
+    src/precomputedMagics.cpp
+    src/search.cpp
+    src/tt.cpp
+    src/uci.cpp
+    src/zobrist.cpp
+)
 
 # Build the executable
 add_executable(ironfang ${SOURCES})
