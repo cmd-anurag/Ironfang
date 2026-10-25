@@ -13,14 +13,17 @@ struct TTEntry {
     int eval;
     uint16_t packedMove;
     uint8_t depth;
-    uint8_t flag;
+    uint8_t flag : 2;
+    uint8_t age  : 6;
 };
 
 static_assert(sizeof(TTEntry) == 16, "TT entries should stay compact");
 
 // Match the reference's 64 MiB direct-mapped table. With 16-byte entries this
-// yields exactly 4,194,304 slots; indexing uses modulo, as in the reference.
+// yields exactly 4,194,304 slots; indexing uses mask TT_MASK = TT_SIZE - 1.
 constexpr size_t TT_SIZE = (64ULL * 1024 * 1024) / sizeof(TTEntry);
+constexpr size_t TT_MASK = TT_SIZE - 1;
+static_assert((TT_SIZE & TT_MASK) == 0, "TT_SIZE must be a power of two");
 
 class TranspositionTable {
     public:
@@ -48,6 +51,8 @@ class TranspositionTable {
         );
 
         void clear();
+        void incrementAge() { ++currentAge; }
+        uint8_t currentAge = 0;
         uint64_t lookupCount = 0;      // all TT probes in the main search
         uint64_t hitCount = 0;         // probes that returned a usable alpha-beta bound
         uint64_t keyMatchCount = 0;    // probes whose indexed entry matched the full key

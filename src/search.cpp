@@ -828,6 +828,7 @@ int Search::searchChild(BitBoard& board, int childDepth, int alpha, int beta,
 // -----------------------------------------------------------------------------
 Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     maxDepth = std::max(1, std::min(maxDepth, MAX_DEPTH));
+    TT.incrementAge();
     // Reset counters
     nodeCount = 0;
     quiescenceNodeCount = 0;

@@ -18,18 +18,14 @@ bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int be
                                int ply, int &outEval, uint16_t &outMove, bool allowCutoff)
 {
     ++lookupCount;
+    outMove = 0;
 
-    size_t index = static_cast<size_t>(zobristKey % TT_SIZE);
+    size_t index = static_cast<size_t>(zobristKey & TT_MASK);
     TTEntry &entry = table[index];
-
-    // Match the reference's hash-move hint behavior: move ordering may use
-    // the indexed move even when the stored key collided with this position.
-    // The reference always reads the indexed entry's move, even for an empty
-    // slot (whose default move is a1-a1) or a matching zero key.
-    outMove = entry.packedMove;
 
     if (entry.key == zobristKey) {
         ++keyMatchCount;
+        outMove = entry.packedMove;
 
         // Check if stored depth is enough
         if (allowCutoff && entry.depth >= depth) {
@@ -79,22 +75,42 @@ void TranspositionTable::store(uint64_t zobristKey, int depth, int eval,
                                TT_FLAG flag, uint16_t bestMove)
 {
     ++totalStoreAttempts;
-    size_t index = static_cast<size_t>(zobristKey % TT_SIZE);
+    size_t index = static_cast<size_t>(zobristKey & TT_MASK);
     TTEntry &entry = table[index];
 
-    // The reference replaces the indexed entry on every store. Its TT is
-    // direct-mapped and has no depth/age replacement preference.
-    if (entry.key == 0)
-        ++entriesOccupied;
-    else if (entry.key != zobristKey)
-        ++overwritten;
+    bool isOverwrite = (entry.key != 0 && entry.key != zobristKey);
 
-    entry.key = zobristKey;
-    entry.depth = static_cast<uint8_t>(depth);
-    entry.eval = eval;
-    entry.packedMove = bestMove;
-    entry.flag = static_cast<uint8_t>(flag);
-    ++actualStores;
+    bool shouldReplace = false;
+
+    if (entry.key == 0) {
+        shouldReplace = true;
+    }
+    else if (entry.key == zobristKey) {
+        shouldReplace = (depth >= entry.depth);
+    }
+    else {
+        int ageDiff = (currentAge - entry.age + 64) & 0x3F;
+        int oldScore = entry.depth - ageDiff;
+        int newScore = depth;
+
+        shouldReplace = (newScore >= oldScore);
+    }
+
+    if (shouldReplace) {
+        if (entry.key == 0)       ++entriesOccupied;
+        else if (isOverwrite)     ++overwritten;
+
+        entry.key = zobristKey;
+        entry.depth = static_cast<uint8_t>(std::clamp(depth, 0, 255));
+        entry.eval = eval;
+        entry.packedMove = bestMove;
+        entry.flag = static_cast<uint8_t>(flag);
+        entry.age = currentAge & 0x3F;
+        ++actualStores;
+    }
+    else if (entry.key == zobristKey && bestMove != 0) {
+        entry.packedMove = bestMove;
+    }
 }
 
 
@@ -102,6 +118,7 @@ void TranspositionTable::clear() {
     for (size_t i = 0; i < TT_SIZE; ++i)
         table[i] = TTEntry{};
     entriesOccupied = 0;
+    currentAge = 0;
 }
 
 size_t TranspositionTable::countOccupied() const {

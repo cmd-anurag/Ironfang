@@ -269,13 +269,23 @@ int kingPawnShield(const BitBoard& board, Color kingSide,
         const bool canStillCastle = kingSide == WHITE
             ? board.whiteKingsideCastle || board.whiteQueensideCastle
             : board.blackKingsideCastle || board.blackQueensideCastle;
+        const float enemyDevelopmentScore = std::clamp(
+            (enemyPieceSquareScore + 10) / 130.0f, 0.0f, 1.0f);
         if (canStillCastle) {
             // This incentive is for keeping castling available. Once both
             // rights are gone, don't reward a king walk toward an unavailable
             // corner; assess its shelter and file exposure below instead.
-            const float enemyDevelopmentScore = std::clamp(
-                (enemyPieceSquareScore + 10) / 130.0f, 0.0f, 1.0f);
             uncastledKingPenalty = static_cast<int>(50 * enemyDevelopmentScore);
+        } else {
+            // King is permanently stranded in the center with both castling rights lost.
+            uncastledKingPenalty = static_cast<int>(60 * enemyDevelopmentScore) + 25;
+        }
+
+        // Severe vulnerability if the king's central file has no friendly pawn shield.
+        const uint64_t kingFileMask = FILES[kingFile];
+        if ((defendingMaterial.pawns & kingFileMask) == 0) {
+            const bool noEnemyPawn = (attackingMaterial.pawns & kingFileMask) == 0;
+            uncastledKingPenalty += noEnemyPawn ? 70 : 40;
         }
     }
 
@@ -294,13 +304,37 @@ int kingPawnShield(const BitBoard& board, Color kingSide,
         }
     }
 
+    int developmentPenalty = 0;
+    if (defendingMaterial.endgameT < 0.2f) {
+        int undevelopedMinors = 0;
+        if (kingSide == WHITE) {
+            if (board.getPiece(57) == WN) ++undevelopedMinors; // b1
+            if (board.getPiece(58) == WB) ++undevelopedMinors; // c1
+            if (board.getPiece(61) == WB) ++undevelopedMinors; // f1
+            if (board.getPiece(62) == WN) ++undevelopedMinors; // g1
+            const bool queenMoved = (board.getPiece(59) != WQ); // d1
+            if (queenMoved && undevelopedMinors >= 2) {
+                developmentPenalty = 30 * undevelopedMinors;
+            }
+        } else {
+            if (board.getPiece(1) == BN) ++undevelopedMinors; // b8
+            if (board.getPiece(2) == BB) ++undevelopedMinors; // c8
+            if (board.getPiece(5) == BB) ++undevelopedMinors; // f8
+            if (board.getPiece(6) == BN) ++undevelopedMinors; // g8
+            const bool queenMoved = (board.getPiece(3) != BQ); // d8
+            if (queenMoved && undevelopedMinors >= 2) {
+                developmentPenalty = 30 * undevelopedMinors;
+            }
+        }
+    }
+
     float weight = 1.0f - attackingMaterial.endgameT;
     if (attackingMaterial.numQueens == 0) {
         weight *= 0.6f;
     }
 
     return static_cast<int>(
-        (-shieldPenalty - uncastledKingPenalty - openFilePenalty) * weight);
+        (-shieldPenalty - uncastledKingPenalty - openFilePenalty - developmentPenalty) * weight);
 }
 }
 
