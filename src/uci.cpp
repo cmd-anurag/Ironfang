@@ -78,7 +78,7 @@ void uciLoop() {
         iss >> token;
 
         if(token == "uci") {
-            printUciLine("id name Ironfangv24");
+            printUciLine("id name Ironfangv25");
             printUciLine("id author dark");
             printUciLine("option name UseOpeningBook type check default true");
             printUciLine("uciok");
