@@ -1,41 +1,28 @@
-# Ironfang Development & Architecture Guide
+# Ironfang Development Guide & Benchmarks
 
-A comprehensive technical reference for the architecture, search theory, evaluation system, benchmark methodology, and development history of the **Ironfang** chess engine.
+The practical engineering guide, changelog, empirical benchmark results, and development standards for the **Ironfang** chess engine.
+
+> 📖 **Algorithmic & Evaluation Theory**: For complete mathematical formulations, Minimax proofs, Zobrist hashing mechanics, search pruning algorithms, and evaluation heuristics, see the dedicated companion manual: **[THEORY.md](THEORY.md)**.
 
 ---
 
 ## Table of Contents
 1. [Engine Overview & Version Milestones](#1-engine-overview--version-milestones)
-2. [Search Architecture & Algorithmic Theory](#2-search-architecture--algorithmic-theory)
-   - [2.1 Minimax & Alpha-Beta Pruning](#21-minimax--alpha-beta-pruning)
-   - [2.2 Move Ordering Pipeline](#22-move-ordering-pipeline)
-   - [2.3 Transposition Table (TT) & Zobrist Hashing](#23-transposition-table-tt--zobrist-hashing)
-   - [2.4 Iterative Deepening & Aspiration Windows](#24-iterative-deepening--aspiration-windows)
-   - [2.5 Quiescence Search & Stand-Pat](#25-quiescence-search--stand-pat)
-   - [2.6 Reverse Futility Pruning (RFP)](#26-reverse-futility-pruning-rfp)
-   - [2.7 Null Move Pruning (NMP)](#27-null-move-pruning-nmp)
-   - [2.8 Principal Variation Search (PVS / NegaScout)](#28-principal-variation-search-pvs--negascout)
-   - [2.9 Late Move Reductions (LMR)](#29-late-move-reductions-lmr)
-   - [2.10 Frontier Futility Pruning (FP)](#210-frontier-futility-pruning-fp)
-3. [Evaluation Architecture (Hand-Crafted Evaluation)](#3-evaluation-architecture-hand-crafted-evaluation)
-   - [3.1 Material & Piece Values](#31-material--piece-values)
-   - [3.2 Piece-Square Tables (PST) & Game Phase Interpolation](#32-piece-square-tables-pst--game-phase-interpolation)
-   - [3.3 Pawn Structure & Passed Pawn Bonuses](#33-pawn-structure--passed-pawn-bonuses)
-   - [3.4 Piece Mobility & Attack Rays](#34-piece-mobility--attack-rays)
-   - [3.5 King Safety, Pawn Shields & Central File Penalties](#35-king-safety-pawn-shields--central-file-penalties)
-   - [3.6 Opening Queen Excursion Penalties](#36-opening-queen-excursion-penalties)
-4. [Empirical Observations & Benchmark Results](#4-empirical-observations--benchmark-results)
-   - [4.1 Search Tree Pruning Efficiency](#41-search-tree-pruning-efficiency)
-   - [4.2 Head-to-Head Cutechess Match Play](#42-head-to-head-cutechess-match-play)
-   - [4.3 Multi-Tier Tactical Puzzle Suite (250 Curated Puzzles)](#43-multi-tier-tactical-puzzle-suite-250-curated-puzzles)
-5. [Development Standards & Tooling](#5-development-standards--tooling)
-6. [Roadmap & Upcoming Work (NNUE)](#6-roadmap--upcoming-work-nnue)
+2. [Search & Evaluation Architecture Summary](#2-search--evaluation-architecture-summary)
+3. [Empirical Observations & Benchmark Results](#3-empirical-observations--benchmark-results)
+   - [3.1 Search Tree Pruning Efficiency (Depth 8 Bench)](#31-search-tree-pruning-efficiency-depth-8-bench)
+   - [3.2 Head-to-Head Cutechess Match Play](#32-head-to-head-cutechess-match-play)
+   - [3.3 Multi-Tier Tactical Puzzle Suite (250 Curated Puzzles)](#33-multi-tier-tactical-puzzle-suite-250-curated-puzzles)
+4. [Development Standards & Tooling](#4-development-standards--tooling)
+   - [4.1 Binary Compilation & Release Archive](#41-binary-compilation--release-archive)
+   - [4.2 Automated Testing Scripts](#42-automated-testing-scripts)
+5. [Roadmap & Next Steps (NNUE)](#5-roadmap--next-steps-nnue)
 
 ---
 
 ## 1. Engine Overview & Version Milestones
 
-Ironfang is a high-performance, UCI-compliant chess engine written in C++17 utilizing bitboard board representation, magic bitboards for sliding piece attacks, and an advanced search pipeline.
+Ironfang is a high-performance, UCI-compliant chess engine written in C++17 utilizing bitboard representation, magic bitboard sliding attacks, and an advanced search pipeline.
 
 ### Version Milestones
 
@@ -47,163 +34,37 @@ Ironfang is a high-performance, UCI-compliant chess engine written in C++17 util
 
 ---
 
-## 2. Search Architecture & Algorithmic Theory
+## 2. Search & Evaluation Architecture Summary
 
-The search algorithm determines which moves to evaluate and how deep to calculate. Ironfang employs an enhanced fail-hard Alpha-Beta framework with extensive pruning and reduction techniques.
+Ironfang pairs a selective Alpha-Beta search with Hand-Crafted Evaluation (HCE). For in-depth mathematical formulations and pseudocode, consult **[THEORY.md](THEORY.md)**.
 
-```
-Position (ply, depth, alpha, beta)
-  │
-  ├── 1. Transposition Table Probe ──────> (Hit with valid depth & bounds? Return ttScore)
-  │
-  ├── 2. Leaf Check (depth <= 0) ─────────> (Enter Quiescence Search)
-  │
-  ├── 3. In-Check Check
-  │
-  ├── 4. Static Evaluation (if !inCheck)
-  │
-  ├── 5. Reverse Futility Pruning (RFP) ─> (depth <= 3 && staticEval - 75*depth >= beta? Return beta)
-  │
-  ├── 6. Null Move Pruning (NMP) ────────> (depth >= 3 && staticEval >= beta? Search null move)
-  │                                        (Opponent score >= beta? Return beta)
-  │
-  ├── 7. Legal Move Generation & Ordering
-  │       (TT move -> MVV-LVA Captures -> Killers -> History Heuristics)
-  │
-  └── 8. Move Loop (Iterate ordered moves)
-          ├── 8.1 Frontier Futility Pruning (depth == 1 && quiet && staticEval + 150 <= alpha? Skip)
-          ├── 8.2 Late Move Reductions (depth >= 3 && moveIndex >= 3 && quiet? Search reduced)
-          ├── 8.3 Principal Variation Search (Move 0: full window; Move 1+: null window scout)
-          └── 8.4 Beta Cutoff (score >= beta? Store TT_LOWER, update Killers & History, Return beta)
-```
+### Search Engine Components
+* **Framework**: Iterative deepening with Aspiration Windows ($[\text{score} - 30\text{ cp}, \text{score} + 30\text{ cp}]$).
+* **Transposition Table**: 64 MiB direct-mapped table (4,194,304 entries) with 16-byte compact entries and age-priority replacement.
+* **Move Ordering**: Hash move $\rightarrow$ Winning/Equal MVV-LVA captures $\rightarrow$ Queen promotions $\rightarrow$ Killer moves $\rightarrow$ History heuristics $\rightarrow$ Quiet PST ordering.
+* **Pruning Pipeline**:
+  * **Reverse Futility Pruning (RFP)**: Near leaves ($d \le 3$), prunes if $\text{staticEval} - 75 \times d \ge \beta$.
+  * **Null Move Pruning (NMP)**: Bypasses subtrees if passing the turn still refutes the opponent ($R = 3 + d/6$), guarded by non-pawn piece checks against zugzwang.
+  * **Frontier Futility Pruning (FP)**: At $d = 1$, prunes quiet moves if $\text{staticEval} + 150 \le \alpha$.
+* **Reductions & Scouts**:
+  * **Principal Variation Search (PVS)**: Searches Move 0 with full window; searches subsequent sibling moves with narrow zero-window scouts $[-\alpha-1, -\alpha]$.
+  * **Late Move Reductions (LMR)**: Reduces late quiet moves (`moveIndex >= 3`) by 1 ply.
+* **Quiescence Search**: Resolves tactical captures and promotions with Stand-Pat cutoffs to eliminate the Horizon Effect.
 
-### 2.1 Minimax & Alpha-Beta Pruning
-In a zero-sum game, White maximizes score and Black minimizes score. Full Minimax over $b \approx 35$ legal moves to depth $d = 8$ requires examining:
-$$35^8 \approx 2.25 \times 10^{12} \text{ nodes (2.25 trillion)}$$
-
-**Alpha-Beta Pruning** maintains two bounds:
-- $\alpha$: The highest score guaranteed to the side to move so far.
-- $\beta$: The lowest score the opponent is guaranteed to hold us down to in alternative branches.
-
-When any move produces a score $\ge \beta$, the opponent has an earlier countermove that avoids this position. The search immediately triggers a **Beta Cutoff (fail-high)**. Under optimal move ordering, the branching factor drops from $b$ to $\sqrt{b}$, reducing the theoretical tree size from $\mathcal{O}(b^d)$ to $\mathcal{O}(b^{d/2})$ ($\approx 1.5$ million nodes at depth 8).
-
-### 2.2 Move Ordering Pipeline
-Alpha-Beta efficiency depends entirely on searching the best move first. Ironfang orders moves dynamically before search:
-1. **Transposition Table Hash Move**: The best move recorded from prior searches of this Zobrist hash (score bias: $+100,000$).
-2. **Winning & Equal Captures (MVV-LVA)**: *Most Valuable Victim – Least Valuable Attacker*. Evaluated via `Evaluation::pieceValue[victim] - Evaluation::pieceValue[attacker]`. A pawn taking a queen ($P \times Q$) is ordered before a queen taking a pawn ($Q \times P$).
-3. **Queen Promotions**: Non-capture promotions to Queen receive high priority (`PROMOTION_BIAS = 9,000`).
-4. **Killer Moves**: Up to 2 non-capture moves per ply that caused beta cutoffs in sibling branches (`killerMoves[ply][0]` and `killerMoves[ply][1]`).
-5. **History Heuristic**: A table `historyHeuristics[color][from][to]` incremented by $\text{depth}^2$ whenever a quiet move causes a beta cutoff.
-6. **Losing Captures & Quiet Moves**: Ordered by Piece-Square Table deltas and penalized if the destination square is attacked by opponent pawns or pieces.
-
-### 2.3 Transposition Table (TT) & Zobrist Hashing
-Different move orders frequently reach the identical board configuration (transposition).
-- **Zobrist Hash**: 64-bit key maintained incrementally via XOR ($\oplus$) operations upon every move and unmake.
-- **Entry Layout**: A compact 16-byte struct:
-  ```cpp
-  struct TTEntry {
-      uint64_t key;        // 8 bytes: full 64-bit Zobrist key
-      int eval;            // 4 bytes: score normalized relative to ply
-      uint16_t packedMove; // 2 bytes: best move
-      uint8_t depth;       // 1 byte: search depth
-      uint8_t flag : 2;    // TT_EXACT, TT_UPPER, TT_LOWER
-      uint8_t age  : 6;    // search generation
-  };
-  ```
-- **Table Size & Indexing**: Fixed at $64\text{ MiB} = 4,194,304\text{ entries}$. Direct-mapped indexing uses bitmask `TT_MASK = TT_SIZE - 1`.
-- **Replacement Policy**: Combines depth and age:
-  $$\text{oldScore} = \text{entry.depth} - \text{ageDiff}, \quad \text{newScore} = \text{depth}$$
-  A new search replaces the slot if $\text{newScore} \ge \text{oldScore}$.
-
-### 2.4 Iterative Deepening & Aspiration Windows
-Ironfang searches depths iteratively:
-$$\text{Depth 1} \rightarrow \text{Depth 2} \rightarrow \dots \rightarrow \text{Depth } N$$
-Earlier depths consume $<10\%$ of total clock time while populating the Transposition Table with accurate hash moves for subsequent depths.
-
-**Aspiration Windows**: For $\text{depth} \ge 4$, rather than searching $[-\infty, +\infty]$, the search window is bounded around the previous iteration's score:
-$$[\alpha, \beta] = [\text{prevScore} - \Delta, \text{prevScore} + \Delta] \quad (\Delta = 30\text{ cp})$$
-Narrow windows force earlier beta cutoffs and fail-lows. If a score fails outside the window, $\Delta$ expands by $1.5\times$ ($\Delta \leftarrow \Delta + \Delta/2$) until resolving.
-
-### 2.5 Quiescence Search & Stand-Pat
-To avoid the **Horizon Effect** (where evaluation occurs right after a piece capture before the opponent recaptures), search at `depth <= 0` transitions into Quiescence Search:
-- Only legal captures and promotions are generated.
-- **Stand-Pat**: The static evaluation is computed first. If $\text{staticEval} \ge \beta$, the position is already too advantageous for the opponent to allow, triggering an immediate cutoff without generating captures.
-
-### 2.6 Reverse Futility Pruning (RFP / Static Null Move Pruning)
-At low depths ($\text{depth} \le 3$), when the side to move is not in check:
-$$\text{If } \text{staticEval} - (75 \times \text{depth}) \ge \beta \implies \text{Return } \beta$$
-If our static advantage exceeds $\beta$ by more than $75\text{ cp}$ (depth 1), $150\text{ cp}$ (depth 2), or $225\text{ cp}$ (depth 3), the opponent cannot plausibly overcome this margin in the remaining plies. The engine cuts off immediately without generating moves.
-
-### 2.7 Null Move Pruning (NMP)
-If the side to move does nothing (**passes the turn**) and the opponent *still* cannot beat $\beta$ after a reduced-depth search, the position is overwhelmingly winning, making a full search redundant.
-- **Preconditions**: `allowNull == true`, `depth >= 3`, `ply > 0`, `!inCheck`, `beta < MATE_THRESHOLD`, `staticEval >= beta`.
-- **Zugzwang Guard**: NMP is skipped if the side to move has only pawns remaining (`hasNonPawns == false`), preventing false cutoffs in zugzwang endgames.
-- **Reduction Formula**:
-  $$R = 3 + \frac{\text{depth}}{6}$$
-  $$\text{nullScore} = -\text{minimaxAlphaBeta}(\text{board}, \text{depth} - 1 - R, -\beta, -\beta + 1, \text{ply} + 1, \text{allowNull} = \text{false})$$
-- If $\text{nullScore} \ge \beta$, search takes an immediate beta cutoff.
-
-### 2.8 Principal Variation Search (PVS / NegaScout)
-Because move ordering places the best move first $>85\%$ of the time:
-- **Move 0**: Searched with the full window $[-\beta, -\alpha]$.
-- **Moves $1, 2, 3\dots$**: Assumed to be inferior to Move 0. Searched with a **Zero-Window Scout Search**:
-  $$[-\alpha - 1, -\alpha]$$
-- Zero-window searches fail low rapidly with minimal branching.
-- **Re-search**: If and only if a scout search beats $\alpha$ ($\text{score} > \alpha$), the assumption failed, and the move is re-searched with the full window $[-\beta, -\alpha]$.
-
-### 2.9 Late Move Reductions (LMR)
-Quiet moves appearing late in the move list (`moveIndex >= 3` at `depth >= 3`) that are not checks, promotions, or killer moves are searched with reduced depth:
-$$\text{childDepth}_{\text{reduced}} = \text{childDepth} - 1$$
-If a reduced move scores above $\alpha$, it is re-searched at full depth.
-
-### 2.10 Frontier Futility Pruning (FP)
-At frontier nodes ($\text{depth} == 1$), if the side to move is not in check, quiet non-checking moves are tested before child search:
-$$\text{If } \text{staticEval} + 150 \le \alpha \implies \text{Prune quiet move}$$
-A quiet piece move to an empty square cannot gain more than 150 centipawns in a single ply. If $\text{staticEval} + 150$ cannot even reach $\alpha$, the move is guaranteed to fail low and is skipped.
+### Evaluation Function Components
+* **Material & Phase Interpolation**: Base material scores smoothly interpolated across game phases ($0 = \text{endgame}, 24 = \text{middlegame}$).
+* **Piece-Square Tables (PST)**: Position-dependent bonuses/penalties for all 6 piece types.
+* **Pawn Structure**: Dynamic rewards for passed pawns ($0$ to $+160\text{ cp}$); penalties for isolated ($-15\text{ cp}$) and doubled pawns ($-20\text{ cp}$).
+* **Mobility**: Safe attack ray mobility computed via precomputed Magic Bitboards.
+* **King Safety**: Castled pawn shield bonuses; dynamic penalties ($-35$ to $-60\text{ cp}$) for uncastled kings lingering on open central files.
+* **Opening Principles**: Penalties for premature queen sorties before minor piece development.
 
 ---
 
-## 3. Evaluation Architecture (Hand-Crafted Evaluation)
+## 3. Empirical Observations & Benchmark Results
 
-Ironfang's evaluation function (`Evaluation::evaluate`) returns an integer score from the perspective of the side to move, combining multiple positional and material heuristics.
-
-### 3.1 Material & Piece Values
-Base piece values:
-- Pawn: $100\text{ cp}$
-- Knight: $300\text{ cp}$
-- Bishop: $320\text{ cp}$
-- Rook: $500\text{ cp}$
-- Queen: $900\text{ cp}$
-- King: $20,000\text{ cp}$
-
-### 3.2 Piece-Square Tables (PST) & Game Phase Interpolation
-Every piece type has a $64$-entry table assigning positional bonuses and penalties. Scores smoothly interpolate between **Middlegame (MG)** and **Endgame (EG)** based on the remaining non-pawn material phase ($0 = \text{endgame}, 24 = \text{full middlegame}$):
-$$\text{Score} = \frac{\text{MG} \times \text{phase} + \text{EG} \times (24 - \text{phase})}{24}$$
-
-### 3.3 Pawn Structure & Passed Pawn Bonuses
-- **Passed Pawns**: A pawn with no opposing pawns on its file or adjacent files ahead of it receives rank-dependent bonuses ($0, 10, 20, 40, 80, 160\text{ cp}$).
-- **Isolated Pawns**: Pawns with no friendly pawns on adjacent files receive a penalty ($-15\text{ cp}$).
-- **Doubled Pawns**: Multiple friendly pawns on the same file receive a penalty ($-20\text{ cp}$).
-
-### 3.4 Piece Mobility & Attack Rays
-Computed dynamically via precomputed magic bitboards:
-- Bishop mobility: Number of legal sliding attack squares outside friendly pieces.
-- Rook mobility: Number of rank and file attack squares.
-- Queen mobility: Combined diagonal, rank, and file squares.
-
-### 3.5 King Safety, Pawn Shields & Central File Penalties
-- **Pawn Shield**: Rewards intact friendly pawns on files $f, g, h$ (kingside) or $a, b, c$ (queenside) when castled.
-- **Uncastled King on Open Central Files**: If the king remains on $d$ or $e$ files and the central file is open (no pawns) or semi-open, Ironfang assesses a heavy dynamic penalty ($-35\text{ to } -60\text{ cp}$), preventing kings from lingering in the crosshairs of enemy rooks.
-
-### 3.6 Opening Queen Excursion Penalties
-Premature queen sorties before minor piece development are penalized ($-25\text{ to } -50\text{ cp}$), preventing early queen blunders.
-
----
-
-## 4. Empirical Observations & Benchmark Results
-
-### 4.1 Search Tree Pruning Efficiency
-Tested across the 6 standard benchmark positions at fixed depth 8 (`tools/bench.py --depth 8`):
+### 3.1 Search Tree Pruning Efficiency (Depth 8 Bench)
+Evaluated across standard positions via `python tools/bench.py --depth 8`:
 
 | Benchmark Position | Baseline v28 Nodes | v29 Nodes (NMP + RFP + PVS + FP) | Tree Reduction |
 | :--- | :--- | :--- | :--- |
@@ -212,19 +73,14 @@ Tested across the 6 standard benchmark positions at fixed depth 8 (`tools/bench.
 | **`promotion_castling`** | 814,584 | **129,864** | **-84.1%** |
 | **`promotion_tactics`** | 555,480 | **61,093** | **-89.0%** |
 | **`middlegame_tactics`** | 1,129,308 | **128,000** | **-88.7%** |
-| **Total Benchmark Nodes** | **4,126,234** | **473,559** | **-88.5% (8.7× tree reduction)** |
+| **Total Benchmark Nodes** | **4,126,234** | **473,559** | **-88.5% (8.7× smaller tree)** |
 
-All tactical benchmark moves (`d5d6`, `b4f4`, `c4c5`, `d7c8q`, `c3d5`) retain 100% precision.
+All benchmark positions continue to identify the exact expected best moves (`d5d6`, `b4f4`, `c4c5`, `d7c8q`, `c3d5`).
 
 ---
 
-### 4.2 Head-to-Head Cutechess Match Play
-
-Matches executed using Cutechess CLI at standard `10+0.1` blitz time control:
-
-```
-cutechess-cli.exe -engine name=Ironfang-v29 cmd=... -engine name=Ironfang-v28 cmd=... -each tc=10+0.1
-```
+### 3.2 Head-to-Head Cutechess Match Play
+Matches executed via Cutechess CLI at standard `10+0.1` blitz time control:
 
 - **v29 vs. v28 Baseline**: **4.0 – 2.0 (+2 =4 -0, 66.7%)** $\implies$ **+120.4 Elo over v28 (LOS: 92.1%)**
 - **v29 vs. Reference Engine**: **5.5 – 0.5 (+5 =1 -0, 91.7%)** $\implies$ **+416.6 Elo over Reference (LOS: 98.7%)**
@@ -232,16 +88,16 @@ cutechess-cli.exe -engine name=Ironfang-v29 cmd=... -engine name=Ironfang-v28 cm
 
 ---
 
-### 4.3 Multi-Tier Tactical Puzzle Suite (250 Curated Puzzles)
-
-Dataset: [`tools/puzzles.csv`](file:///d:/playground/Ironfang/tools/puzzles.csv) contains **250 verified tactical puzzles** from Lichess across 5 categories:
+### 3.3 Multi-Tier Tactical Puzzle Suite (250 Curated Puzzles)
+Dataset: [`tools/puzzles.csv`](tools/puzzles.csv) contains **250 verified tactical puzzles** from Lichess across 5 categories:
 1. `mating` (50 puzzles, Elo 403–1698, Avg: 981)
 2. `motifs` (50 puzzles, Elo 624–2190, Avg: 1350)
 3. `advanced` (50 puzzles, Elo 947–2728, Avg: 1718)
 4. `endgame` (50 puzzles, Elo 804–2152, Avg: 1555)
 5. `master_gm` (50 puzzles, Elo 2205–2873, Avg: 2410)
 
-Evaluated across three time controls via `python tools/solve_puzzles.py --times 25,100,250`:
+#### Comparative Baseline Test: v28 vs. v29
+Evaluated via `python tools/solve_puzzles.py --times 25,100,250`:
 
 | Time Control | Engine | Solved (%) | Avg Depth | Mating (50) | Motifs (50) | Advanced (50) | Endgame (50) | Master / GM (50) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -252,8 +108,8 @@ Evaluated across three time controls via `python tools/solve_puzzles.py --times 
 | **250ms** | v28 | 230 / 250 (92.0%) | d7.7 | 48 / 50 | 48 / 50 | 48 / 50 | 49 / 50 | 37 / 50 (74%) |
 | | **v29** | 229 / 250 (91.6%) | **d10.6 (+2.9 plies)** | 48 / 50 | 49 / 50 | 47 / 50 | 49 / 50 | 36 / 50 (72%) |
 
-#### Standard Deeper Search Scaling (Ironfang v29)
-When tested on deeper thinking times (`python tools/solve_puzzles.py --times 100,300,1000`):
+#### Deeper Search Scaling (Ironfang v29)
+Evaluated up to 1 full second per puzzle via `python tools/solve_puzzles.py --times 100,300,1000`:
 
 | Time Tier | Solved (%) | Avg Depth | Avg Time / Puzzle | Mating (50) | Motifs (50) | Advanced (50) | Endgame (50) | Master / GM (50) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -261,51 +117,51 @@ When tested on deeper thinking times (`python tools/solve_puzzles.py --times 100
 | **300ms** | 231 / 250 (92.4%) | d10.8 | 234.7 ms | 48 / 50 | 49 / 50 | 48 / 50 | 48 / 50 | 38 / 50 (76%) |
 | **1000ms (1.0s)** | **236 / 250 (94.4%)** | **d12.0** | 780.9 ms | 48 / 50 (96%) | 49 / 50 (98%) | 48 / 50 (96%) | **50 / 50 (100%)** | **41 / 50 (82%)** |
 
-*Notice: At 1 full second per puzzle, Ironfang achieves a **perfect 100% (50/50) score on Endgames** and solves **82% (41/50) of Grandmaster-level tactics**.*
+*At 1 second per move, Ironfang achieves a **perfect 100% score on Endgames** and solves **82% of Grandmaster-level tactics**.*
 
 ---
 
-## 5. Development Standards & Tooling
+## 4. Development Standards & Tooling
 
-### Binary Compilation
-Compiled using CMake and Ninja on Windows x64:
+### 4.1 Binary Compilation & Release Archive
+Compile using CMake and Ninja on Windows x64:
 ```powershell
 cmake -S . -B build-windows -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build-windows --config Release
 ```
 
-### Engine Binary Version Archive
 All milestone executables are permanently archived by version in `D:/engines/`:
 - `D:/engines/v28/v28.exe`
 - `D:/engines/v29/v29.exe`
 
-*(Note: File copy operations to `D:/engines/` must avoid the `-Force` flag to prevent accidental overwrite errors).*
+*(Rule: File copy commands to `D:/engines/` must never use `-Force` to prevent accidental overwrites).*
 
-### Automated Challenge & Match Runners
-- **Lichess Bot Challenger**: [`sc.py`](file:///d:/playground/Ironfang/sc.py)
+### 4.2 Automated Testing Scripts
+- **Lichess Bot Challenger**: [`sc.py`](sc.py)
   ```powershell
   python sc.py <opponent_bot_username> --tc 3+1
   ```
-- **Cutechess Head-to-Head Runner**: [`scratch/run_match_v29_vs_v28.py`](file:///C:/Users/anurag/.gemini/antigravity/brain/2654f033-c930-45f4-921e-10bf8b61b91e/scratch/run_match_v29_vs_v28.py)
+- **Cutechess Head-to-Head Runner**: [`scratch/run_match_v29_vs_v28.py`](scratch/run_match_v29_vs_v28.py)
   ```powershell
   python scratch/run_match_v29_vs_v28.py 6 10+0.1 2
   ```
-- **250-Puzzle Tactical Benchmark**: [`tools/solve_puzzles.py`](file:///d:/playground/Ironfang/tools/solve_puzzles.py)
+- **250-Puzzle Tactical Benchmark**: [`tools/solve_puzzles.py`](tools/solve_puzzles.py)
   ```powershell
   python tools/solve_puzzles.py --times 25,100,250
+  python tools/solve_puzzles.py --times 100,300,1000
   ```
 
 ---
 
-## 6. Roadmap & Upcoming Work (NNUE)
+## 5. Roadmap & Next Steps (NNUE)
 
 ### Phase 1: Efficiently Updatable Neural Network (NNUE)
 1. **Accumulator Architecture**:
    - HalfKP feature transformer (inputs: king square $\times$ piece square $\times$ piece type).
    - Incremental update inside `BitBoard::makeSearchMove` and `unmakeSearchMove` (adding moving piece, subtracting old square, handling captures).
 2. **Evaluation Network**:
-   - Small, high-throughput network (e.g. $768 \rightarrow 256 \times 2 \rightarrow 32 \rightarrow 1$ or HalfKP $40960 \rightarrow 256$).
-   - Quantized INT8 / INT16 AVX2 vector SIMD inference for ultra-high NPS.
+   - Compact network (e.g. $768 \rightarrow 256 \times 2 \rightarrow 32 \rightarrow 1$ or HalfKP $40960 \rightarrow 256$).
+   - Quantized INT8 / INT16 AVX2 vector SIMD inference for ultra-high throughput.
 3. **Hybrid Fallback**:
    - Fast material/HCE evaluation on simple positions, blended with NNUE on complex tactical middlegames.
 
