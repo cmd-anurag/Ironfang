@@ -205,9 +205,17 @@ int kingPawnShield(const BitBoard& board, Color kingSide,
         }
         shieldPenalty *= shieldPenalty;
     } else {
-        const float enemyDevelopmentScore = std::clamp(
-            (enemyPieceSquareScore + 10) / 130.0f, 0.0f, 1.0f);
-        uncastledKingPenalty = static_cast<int>(50 * enemyDevelopmentScore);
+        const bool canStillCastle = kingSide == WHITE
+            ? board.whiteKingsideCastle || board.whiteQueensideCastle
+            : board.blackKingsideCastle || board.blackQueensideCastle;
+        if (canStillCastle) {
+            // This incentive is for keeping castling available. Once both
+            // rights are gone, don't reward a king walk toward an unavailable
+            // corner; assess its shelter and file exposure below instead.
+            const float enemyDevelopmentScore = std::clamp(
+                (enemyPieceSquareScore + 10) / 130.0f, 0.0f, 1.0f);
+            uncastledKingPenalty = static_cast<int>(50 * enemyDevelopmentScore);
+        }
     }
 
     int openFilePenalty = 0;
