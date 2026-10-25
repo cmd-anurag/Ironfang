@@ -1,7 +1,9 @@
 
 # Ironfang ♖
 
-IronFang is a simple UCI-compatible chess engine written from scratch in C++.
+IronFang is a UCI-compatible chess engine written from scratch in C++.
+
+> 📖 **Comprehensive Architecture & Development Guide**: See [DEVELOPMENT.md](DEVELOPMENT.md) for full algorithmic theory (Alpha-Beta, NMP, RFP, PVS, Futility Pruning), evaluation design, version history, and empirical benchmark results.
 
 
 ## Project Structure
