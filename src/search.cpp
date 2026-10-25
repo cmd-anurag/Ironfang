@@ -1092,15 +1092,9 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     uint16_t ttMove = 0;
     int ttScore;
     if (TT.probe(transpositionKey(board), depth, alpha, beta, ply, ttScore, ttMove)) {
-        if (ply == 0) {
-            iterationBestPackedMove = ttMove;
-            iterationBestScore = ttScore;
-            if (ttMove != 0) {
-                pvTable[0][0] = SearchMove(ttMove);
-                pvLength[0] = 1;
-            }
+        if (ply > 0) {
+            return ttScore;
         }
-        return ttScore;
     }
 
     if (depth <= 0) {
