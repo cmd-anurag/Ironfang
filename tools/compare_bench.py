@@ -8,7 +8,12 @@ import statistics
 
 def number(row, field):
     value = row.get(field, "")
-    return float(value) if value else None
+    if not value:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def main():
@@ -60,10 +65,22 @@ def main():
         if old.get("score_type") == new.get("score_type") == "cp" and old_score is not None and new_score is not None:
             score_delta = int(new_score - old_score)
 
-        node_ratio = new_nodes / old_nodes if old_nodes else None
-        time_ratio = new_time / old_time if old_time else None
+        node_ratio = (
+            new_nodes / old_nodes
+            if old_nodes not in (None, 0) and new_nodes is not None
+            else None
+        )
+        time_ratio = (
+            new_time / old_time
+            if old_time not in (None, 0) and new_time is not None
+            else None
+        )
         depth_delta = new_depth - old_depth if old_depth is not None and new_depth is not None else None
-        nps_ratio = new_nps / old_nps if old_nps else None
+        nps_ratio = (
+            new_nps / old_nps
+            if old_nps not in (None, 0) and new_nps is not None
+            else None
+        )
         if depth_delta is not None:
             depth_deltas.append(depth_delta)
         if nps_ratio is not None:

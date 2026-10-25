@@ -76,15 +76,15 @@ Move decodeSearchMove(const BitBoard& board, const SearchMove& searchMove) {
     const int to = searchMoveTo(searchMove);
     const int flag = searchMoveFlag(searchMove);
     const Piece piece = board.getPiece(from);
-    const bool enPassant = flag == 1;
-    const bool kingSideCastle = flag == 2 && to > from;
-    const bool queenSideCastle = flag == 2 && to < from;
+    const bool enPassant = flag == COMPACT_MOVE_EN_PASSANT;
+    const bool kingSideCastle = flag == COMPACT_MOVE_CASTLE && to > from;
+    const bool queenSideCastle = flag == COMPACT_MOVE_CASTLE && to < from;
     int promotion = 0;
-    if (flag >= 4) {
+    if (flag >= COMPACT_MOVE_PROMOTE_QUEEN) {
         const bool white = getPieceColor(piece) == WHITE;
-        promotion = flag == 4 ? (white ? WQ : BQ)
-            : flag == 5 ? (white ? WN : BN)
-            : flag == 6 ? (white ? WR : BR)
+        promotion = flag == COMPACT_MOVE_PROMOTE_QUEEN ? (white ? WQ : BQ)
+            : flag == COMPACT_MOVE_PROMOTE_KNIGHT ? (white ? WN : BN)
+            : flag == COMPACT_MOVE_PROMOTE_ROOK ? (white ? WR : BR)
             : (white ? WB : BB);
     }
     Piece capture = board.getPiece(to);
@@ -97,7 +97,6 @@ std::array<std::array<Move, MAX_PLY>, MAX_PLY> pvTable{};
 std::array<int, MAX_PLY> pvLength{};
 std::array<std::array<SearchMove, MAX_SEARCH_MOVES>, MAX_PLY> searchMoveBuffers;
 std::array<std::array<int, MAX_SEARCH_MOVES>, MAX_PLY> searchMoveScores;
-std::array<int, MAX_PLY> searchMoveCounts{};
 std::chrono::steady_clock::time_point hardSearchDeadline;
 bool hasHardSearchDeadline = false;
 std::atomic<bool> searchStoppedByTime{false};
@@ -165,10 +164,10 @@ int referenceMoveFlag(const Move& move) {
     if (move.isEnPassant) return 1;
     if (move.isKingSideCastle || move.isQueenSideCastle) return 2;
     switch (move.promotion & 7) {
-        case 5: return 4;
-        case 2: return 5;
-        case 4: return 6;
-        case 3: return 7;
+        case 5: return COMPACT_MOVE_PROMOTE_QUEEN;
+        case 2: return COMPACT_MOVE_PROMOTE_KNIGHT;
+        case 4: return COMPACT_MOVE_PROMOTE_ROOK;
+        case 3: return COMPACT_MOVE_PROMOTE_BISHOP;
     }
     if (move.piece == TT_PAWN_DOUBLE_PUSH_HINT ||
         ((move.piece & 7) == 1 && std::abs(move.to - move.from) == 16))
@@ -352,18 +351,18 @@ void addReferenceMove(const BitBoard& board, Output& moves, Piece piece,
                       bool enPassant = false) {
     const int capture = enPassant ? NONE : board.getPiece(to);
     if constexpr (std::is_same_v<typename Output::value_type, SearchMove>) {
-        int flag = 0;
-        if (enPassant) flag = 1;
-        else if (kingSideCastle || queenSideCastle) flag = 2;
+        int flag = COMPACT_MOVE_NORMAL;
+        if (enPassant) flag = COMPACT_MOVE_EN_PASSANT;
+        else if (kingSideCastle || queenSideCastle) flag = COMPACT_MOVE_CASTLE;
         else if (promotion) {
             switch (promotion & 7) {
-                case 5: flag = 4; break;
-                case 2: flag = 5; break;
-                case 4: flag = 6; break;
-                case 3: flag = 7; break;
+                case 5: flag = COMPACT_MOVE_PROMOTE_QUEEN; break;
+                case 2: flag = COMPACT_MOVE_PROMOTE_KNIGHT; break;
+                case 4: flag = COMPACT_MOVE_PROMOTE_ROOK; break;
+                case 3: flag = COMPACT_MOVE_PROMOTE_BISHOP; break;
             }
         } else if ((piece & 7) == 1 && std::abs(to - from) == 16) {
-            flag = 3;
+            flag = COMPACT_MOVE_PAWN_DOUBLE_PUSH;
         }
         moves.push_back(SearchMove(static_cast<uint16_t>(
             from | (to << 6) | (flag << 12))));
@@ -660,10 +659,10 @@ void orderMoves(BitBoard& board, SearchMove* moves, int* scores, int moveCount, 
         const int flag = searchMoveFlag(searchMove);
         const Piece piece = board.getPiece(from);
         const int movingType = piece & 7;
-        const Piece capturedPiece = flag == 1
+        const Piece capturedPiece = flag == COMPACT_MOVE_EN_PASSANT
             ? (piece == WP ? BP : WP) : board.getPiece(to);
-        const bool isCapture = flag != 1 && capturedPiece != NONE;
-        const bool isPromotion = flag >= 4;
+        const bool isCapture = flag != COMPACT_MOVE_EN_PASSANT && capturedPiece != NONE;
+        const bool isPromotion = flag >= COMPACT_MOVE_PROMOTE_QUEEN;
         int score = 0;
         // Match the reference's capture classification, which checks the
         // destination square. It therefore treats en passant as a quiet move.
@@ -691,7 +690,7 @@ void orderMoves(BitBoard& board, SearchMove* moves, int* scores, int moveCount, 
         }
 
         if (movingType == 1) {
-            if (!isCapture && isPromotion && flag == 5)
+            if (!isCapture && isPromotion && flag == COMPACT_MOVE_PROMOTE_QUEEN)
                 score += PROMOTION_BIAS;
         } else if (movingType != 6) {
             const int tableIndex = movingType - 1;
@@ -1058,7 +1057,6 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     SearchMoveOutput moveOutput{moves.data(), 0};
     generateReferenceMoves(board, moveOutput, false, attackData);
     const int moveCount = moveOutput.count;
-    searchMoveCounts[ply] = moveCount;
     if (moveCount == 0) {
         if (attackData.inCheck) {
             return -MATE_SCORE + ply;
@@ -1083,7 +1081,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         const int moveFlag = moves[moveIndex].value >> 12;
         const Piece movingPiece = board.getPiece(from);
         Piece capturedPiece = board.getPiece((moves[moveIndex].value >> 6) & 0x3F);
-        if (moveFlag == 1)
+        if (moveFlag == COMPACT_MOVE_EN_PASSANT)
             capturedPiece = prevdata.sideToMove == WHITE ? BP : WP;
         board.makeSearchMove(moves[moveIndex].value, capturedPiece);
 
@@ -1096,7 +1094,11 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
             if (givesCheck || advancedPawn) extension = 1;
         }
 
-        const bool isCapture = capturedPiece != NONE;
+        // Match the reference's search classification: en passant has a
+        // captured pawn, but its destination square is empty, so the reference
+        // treats it as quiet for LMR, killers, and history updates.
+        const bool isCapture = moveFlag != COMPACT_MOVE_EN_PASSANT &&
+            capturedPiece != NONE;
         const bool reduceMove = extension == 0 && depth >= 3 &&
             moveIndex >= 3 && !isCapture;
 
@@ -1206,7 +1208,7 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int ply) {
         const Gamestate previousState = saveGameState(board);
         const int moveFlag = moves[moveIndex].value >> 12;
         Piece capturedPiece = board.getPiece((moves[moveIndex].value >> 6) & 0x3F);
-        if (moveFlag == 1)
+        if (moveFlag == COMPACT_MOVE_EN_PASSANT)
             capturedPiece = previousState.sideToMove == WHITE ? BP : WP;
         board.makeSearchMove(moves[moveIndex].value, capturedPiece);
         const int score = -quiescenceSearch(board, -beta, -alpha, ply + 1);

@@ -565,18 +565,19 @@ void BitBoard::generateKingMoves(int square, std::vector<Move>& moves, Piece p, 
 
 namespace {
 uint16_t encodeCompactMove(const Move& move) {
-    int flag = 0;
-    if (move.isEnPassant) flag = 1;
-    else if (move.isKingSideCastle || move.isQueenSideCastle) flag = 2;
+    int flag = COMPACT_MOVE_NORMAL;
+    if (move.isEnPassant) flag = COMPACT_MOVE_EN_PASSANT;
+    else if (move.isKingSideCastle || move.isQueenSideCastle)
+        flag = COMPACT_MOVE_CASTLE;
     else if (move.promotion) {
         switch (move.promotion & 7) {
-            case 5: flag = 4; break;
-            case 2: flag = 5; break;
-            case 4: flag = 6; break;
-            case 3: flag = 7; break;
+            case 5: flag = COMPACT_MOVE_PROMOTE_QUEEN; break;
+            case 2: flag = COMPACT_MOVE_PROMOTE_KNIGHT; break;
+            case 4: flag = COMPACT_MOVE_PROMOTE_ROOK; break;
+            case 3: flag = COMPACT_MOVE_PROMOTE_BISHOP; break;
         }
     } else if ((move.piece & 7) == 1 && std::abs(move.to - move.from) == 16) {
-        flag = 3;
+        flag = COMPACT_MOVE_PAWN_DOUBLE_PUSH;
     }
     return static_cast<uint16_t>(move.from | (move.to << 6) | (flag << 12));
 }
@@ -611,10 +612,10 @@ void BitBoard::makeSearchMove(uint16_t encodedMove, Piece& capturedPiece) {
     const Piece piece = getPiece(from);
     const Color mover = sideToMove;
     const bool white = mover == WHITE;
-    const bool isCastle = flag == 2;
-    const bool isEnPassant = flag == 1;
-    const bool isPromotion = flag >= 4;
-    const bool isDoublePush = flag == 3;
+    const bool isCastle = flag == COMPACT_MOVE_CASTLE;
+    const bool isEnPassant = flag == COMPACT_MOVE_EN_PASSANT;
+    const bool isPromotion = flag >= COMPACT_MOVE_PROMOTE_QUEEN;
+    const bool isDoublePush = flag == COMPACT_MOVE_PAWN_DOUBLE_PUSH;
     const bool kingSide = isCastle && to > from;
     const int captureSquare = isEnPassant ? to + (white ? 8 : -8) : to;
     capturedPiece = isEnPassant ? (white ? BP : WP) : getPiece(to);
@@ -636,9 +637,9 @@ void BitBoard::makeSearchMove(uint16_t encodedMove, Piece& capturedPiece) {
 
     Piece placedPiece = piece;
     if (isPromotion) {
-        placedPiece = flag == 4 ? (white ? WQ : BQ)
-            : flag == 5 ? (white ? WN : BN)
-            : flag == 6 ? (white ? WR : BR)
+        placedPiece = flag == COMPACT_MOVE_PROMOTE_QUEEN ? (white ? WQ : BQ)
+            : flag == COMPACT_MOVE_PROMOTE_KNIGHT ? (white ? WN : BN)
+            : flag == COMPACT_MOVE_PROMOTE_ROOK ? (white ? WR : BR)
             : (white ? WB : BB);
     }
     if (isCastle) {
@@ -708,7 +709,7 @@ void BitBoard::unmakeSearchMove(uint16_t encodedMove, const Gamestate& prevState
     const Piece king = mover == WHITE ? WK : BK;
     const Piece rook = mover == WHITE ? WR : BR;
 
-    if (flag == 2) {
+    if (flag == COMPACT_MOVE_CASTLE) {
         const bool kingSide = to > from;
         const int rookFrom = mover == WHITE
             ? (kingSide ? 63 : 56) : (kingSide ? 7 : 0);
@@ -718,13 +719,14 @@ void BitBoard::unmakeSearchMove(uint16_t encodedMove, const Gamestate& prevState
         clearSquare(rookTo);
         setPiece(king, from);
         setPiece(rook, rookFrom);
-    } else if (flag == 1) {
+    } else if (flag == COMPACT_MOVE_EN_PASSANT) {
         const int capturedSquare = to + (mover == WHITE ? 8 : -8);
         clearSquare(to);
         setPiece(pawn, from);
         setPiece(capturedPiece, capturedSquare);
     } else {
-        const Piece movedPiece = flag >= 4 ? pawn : getPiece(to);
+        const Piece movedPiece = flag >= COMPACT_MOVE_PROMOTE_QUEEN
+            ? pawn : getPiece(to);
         clearSquare(to);
         setPiece(movedPiece, from);
         if (capturedPiece != NONE) setPiece(capturedPiece, to);

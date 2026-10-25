@@ -106,6 +106,7 @@ switch (action)
         FieldInfo bestEvalField = typeof(Searcher).GetField("bestEvalThisIteration", InstancePrivate)!;
         FieldInfo previousMoveField = typeof(Searcher).GetField("bestMove", InstancePrivate)!;
         FieldInfo hasSearchedField = typeof(Searcher).GetField("hasSearchedAtLeastOneMove", InstancePrivate)!;
+        FieldInfo nodesField = typeof(Searcher).GetField("nodes", InstancePrivate)!;
 
         bestMoveField.SetValue(searcher, Move.NullMove);
         bestEvalField.SetValue(searcher, 0);
@@ -129,8 +130,12 @@ switch (action)
         }
         searchTimer.Stop();
 
+        ulong nodesSearched = (ulong)nodesField.GetValue(searcher)!;
+        double nps = searchTimer.Elapsed.TotalSeconds > 0
+            ? nodesSearched / searchTimer.Elapsed.TotalSeconds
+            : 0;
         Console.WriteLine(action == "bench"
-            ? $"bestmove {MoveToUci(bestMove)} score {bestEval} elapsed_ms {searchTimer.Elapsed.TotalMilliseconds:F3}"
+            ? $"bestmove {MoveToUci(bestMove)} score {bestEval} nodes {nodesSearched} elapsed_ms {searchTimer.Elapsed.TotalMilliseconds:F3} nps {nps:F0}"
             : $"bestmove {MoveToUci(bestMove)} score {bestEval}");
         return 0;
     }

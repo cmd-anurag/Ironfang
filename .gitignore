@@ -8,6 +8,9 @@ chess
 /build-windows/
 /dist/
 perf.data
-bench-results*.csv
+# Generated benchmark output; keep it out of the repository.
+/bench-results*.csv
+/bench/results/
+__pycache__/
 tools/reference-parity/bin/
 tools/reference-parity/obj/
