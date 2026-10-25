@@ -126,29 +126,43 @@ std::string OpeningBook::chooseMove(const BitBoard& board, int gamePly) {
     const auto found = book.movesByPosition.find(book.positionKey(board));
     if (found == book.movesByPosition.end() || found->second.empty()) return {};
 
-    int totalPlayCount = 0;
+    // Find the maximum play count for this position to filter out rare/dubious sidelines
+    int maxPlayCount = 0;
     for (const BookMove& move : found->second) {
-        totalPlayCount += static_cast<int>(std::ceil(std::pow(move.playCount, 0.5)));
+        maxPlayCount = std::max(maxPlayCount, move.playCount);
     }
 
-    std::vector<double> weights;
-    weights.reserve(found->second.size());
-    double weightSum = 0.0;
-    for (size_t i = 0; i < found->second.size(); ++i) {
-        const double weight = static_cast<int>(
-            std::ceil(std::pow(found->second[i].playCount, 0.5))) /
-            static_cast<double>(totalPlayCount);
-        weights.push_back(weight);
-        weightSum += weight;
+    // Filter candidate moves: must have at least 20% of max play count and at least 30 plays
+    const int threshold = std::max(30, static_cast<int>(maxPlayCount * 0.20));
+    std::vector<const BookMove*> candidates;
+    for (const BookMove& move : found->second) {
+        if (move.playCount >= threshold) {
+            candidates.push_back(&move);
+        }
     }
 
-    std::uniform_real_distribution<double> distribution(0.0, 1.0);
-    const double selection = distribution(randomGenerator());
-    double cumulativeProbability = 0.0;
-    for (size_t i = 0; i < weights.size(); ++i) {
-        const double probability = weights[i] / weightSum;
-        cumulativeProbability += probability;
-        if (selection <= cumulativeProbability) return found->second[i].uci;
+    // Fallback: if no move met the threshold, take the most popular move
+    if (candidates.empty()) {
+        const BookMove* best = &found->second[0];
+        for (const BookMove& move : found->second) {
+            if (move.playCount > best->playCount) best = &move;
+        }
+        return best->uci;
     }
-    return found->second.back().uci;
+
+    // Weight candidate moves linearly by play count for natural, sound variety
+    int totalWeight = 0;
+    for (const BookMove* move : candidates) {
+        totalWeight += move->playCount;
+    }
+
+    std::uniform_int_distribution<int> distribution(1, totalWeight);
+    const int selection = distribution(randomGenerator());
+    int cumulative = 0;
+    for (const BookMove* move : candidates) {
+        cumulative += move->playCount;
+        if (selection <= cumulative) return move->uci;
+    }
+
+    return candidates.back()->uci;
 }

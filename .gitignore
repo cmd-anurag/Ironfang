@@ -14,3 +14,4 @@ perf.data
 __pycache__/
 tools/reference-parity/bin/
 tools/reference-parity/obj/
+sc.py
