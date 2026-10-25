@@ -745,6 +745,36 @@ void BitBoard::unmakeSearchMove(uint16_t encodedMove, const Gamestate& prevState
     hasCachedInCheck = false;
 }
 
+void BitBoard::makeNullMove(Gamestate& prevState) {
+    prevState.sideToMove = sideToMove;
+    prevState.enPassantSquare = enPassantSquare;
+    prevState.whiteKingsideCastle = whiteKingsideCastle;
+    prevState.whiteQueensideCastle = whiteQueensideCastle;
+    prevState.blackKingsideCastle = blackKingsideCastle;
+    prevState.blackQueensideCastle = blackQueensideCastle;
+    prevState.whiteKingSquare = whiteKingSquare;
+    prevState.blackKingSquare = blackKingSquare;
+    prevState.zobristKey = zobristKey;
+    prevState.halfmoveClock = halfmoveClock;
+
+    if (enPassantSquare != -1) {
+        zobristKey ^= zobristEnPassant[(enPassantSquare & 7) + 1];
+        enPassantSquare = -1;
+    }
+    sideToMove = sideToMove == WHITE ? BLACK : WHITE;
+    zobristKey ^= zobristBlackToMove;
+    ++halfmoveClock;
+    hasCachedInCheck = false;
+}
+
+void BitBoard::unmakeNullMove(const Gamestate& prevState) {
+    sideToMove = prevState.sideToMove;
+    enPassantSquare = prevState.enPassantSquare;
+    zobristKey = prevState.zobristKey;
+    halfmoveClock = prevState.halfmoveClock;
+    hasCachedInCheck = false;
+}
+
 #if 0
 bool BitBoard::applyMove(const Move &move, bool validateKingSafety) {
     Gamestate prevState = {

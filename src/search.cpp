@@ -805,20 +805,30 @@ static int scoreForTranspositionTable(int score, int ply) {
 }
 
 int Search::searchChild(BitBoard& board, int childDepth, int alpha, int beta,
-                        int ply, int numExtensions, bool reduceMove) {
-    if (reduceMove) {
-        ++lateMoveReductionCount;
-        int score = -minimaxAlphaBeta(board, childDepth - 1, -alpha - 1, -alpha,
-                                      ply, numExtensions);
-        if (searchStoppedByTime || score <= alpha) return score;
-
-        ++lateMoveResearchCount;
+                        int ply, int numExtensions, bool reduceMove, int moveIndex) {
+    if (moveIndex == 0) {
         return -minimaxAlphaBeta(board, childDepth, -beta, -alpha,
                                  ply, numExtensions);
     }
 
-    // Search non-reduced moves with a full alpha-beta window. Reduced moves
-    // receive a full-depth re-search if they beat alpha.
+    int score;
+    if (reduceMove) {
+        ++lateMoveReductionCount;
+        score = -minimaxAlphaBeta(board, childDepth - 1, -alpha - 1, -alpha,
+                                  ply, numExtensions);
+        if (searchStoppedByTime || score <= alpha) return score;
+
+        ++lateMoveResearchCount;
+        score = -minimaxAlphaBeta(board, childDepth, -alpha - 1, -alpha,
+                                  ply, numExtensions);
+    } else {
+        score = -minimaxAlphaBeta(board, childDepth, -alpha - 1, -alpha,
+                                  ply, numExtensions);
+    }
+
+    if (searchStoppedByTime || score <= alpha) return score;
+
+    ++pvsResearchCount;
     return -minimaxAlphaBeta(board, childDepth, -beta, -alpha,
                              ply, numExtensions);
 }
@@ -1046,7 +1056,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
 // Alpha-beta search
 // -----------------------------------------------------------------------------
 int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, int ply,
-                             int numExtensions) {
+                             int numExtensions, bool allowNull) {
     ++nodeCount; // an efficiency metric
     selectiveDepth = std::max(selectiveDepth, ply);
     if (ply < MAX_PLY) {
@@ -1102,6 +1112,39 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         return quiescenceSearch(board, alpha, beta, ply);
     }
 
+    const bool inCheck = board.isInCheck();
+    const int staticEval = !inCheck ? Evaluation::evaluate(board) : -INF;
+
+    // Reverse Futility Pruning (RFP / Static Null Move Pruning)
+    if (depth <= 3 && ply > 0 && !inCheck && beta < MATE_THRESHOLD && alpha > -MATE_THRESHOLD) {
+        const int rfpMargin = 75 * depth;
+        if (staticEval - rfpMargin >= beta) {
+            return beta;
+        }
+    }
+
+    // Null Move Pruning (NMP)
+    if (allowNull && depth >= 3 && ply > 0 && !inCheck && beta < MATE_THRESHOLD && staticEval >= beta) {
+        const bool hasNonPawns = board.sideToMove == WHITE
+            ? (board.getWhitePieces() ^ board.getWhitePawns() ^ (1ULL << board.whiteKingSquare)) != 0
+            : (board.getBlackPieces() ^ board.getBlackPawns() ^ (1ULL << board.blackKingSquare)) != 0;
+        if (hasNonPawns) {
+            ++nullMoveTryCount;
+            const int R = 3 + depth / 6;
+            Gamestate prevState;
+            board.makeNullMove(prevState);
+            const int nullScore = -minimaxAlphaBeta(board, std::max(0, depth - 1 - R), -beta, -beta + 1, ply + 1, numExtensions, false);
+            board.unmakeNullMove(prevState);
+
+            if (searchStoppedByTime) return 0;
+
+            if (nullScore >= beta) {
+                ++nullMoveCutoffCount;
+                return beta;
+            }
+        }
+    }
+
     MoveGenerationAttackData moveGenerationData;
     auto& moves = searchMoveBuffers[ply];
     auto& scores = searchMoveScores[ply];
@@ -1133,25 +1176,36 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
             capturedPiece = previousState.sideToMove == WHITE ? BP : WP;
         board.makeSearchMove(moves[moveIndex].value, capturedPiece);
 
+        // En passant's destination is empty, so classify it as quiet for LMR,
+        // killer moves, and history updates.
+        const bool isCapture = moveFlag != COMPACT_MOVE_EN_PASSANT &&
+            capturedPiece != NONE;
+        const bool isPromotion = moveFlag >= COMPACT_MOVE_PROMOTE_QUEEN;
+
         int extension = 0;
+        const bool givesCheck = board.isInCheck();
         if (numExtensions < MAX_EXTENSIONS) {
-            const bool givesCheck = board.isInCheck();
             const int targetRank = to / 8;
             const bool advancedPawn = (movingPiece & 7) == 1 &&
                 (targetRank == 1 || targetRank == 6);
             if (givesCheck || advancedPawn) extension = 1;
         }
 
-        // En passant's destination is empty, so classify it as quiet for LMR,
-        // killer moves, and history updates.
-        const bool isCapture = moveFlag != COMPACT_MOVE_EN_PASSANT &&
-            capturedPiece != NONE;
+        // Futility Pruning at frontier nodes (depth 1)
+        if (depth == 1 && !inCheck && moveIndex > 0 && !isCapture && !isPromotion && !givesCheck &&
+            alpha > -MATE_THRESHOLD && alpha < MATE_THRESHOLD) {
+            if (staticEval + 150 <= alpha) {
+                board.unmakeSearchMove(moves[moveIndex].value, previousState, capturedPiece);
+                continue;
+            }
+        }
+
         const bool reduceMove = extension == 0 && depth >= 3 &&
             moveIndex >= 3 && !isCapture;
 
         const int score = searchChild(
             board, depth - 1 + extension, alpha, beta, ply + 1,
-            numExtensions + extension, reduceMove);
+            numExtensions + extension, reduceMove, moveIndex);
         board.unmakeSearchMove(moves[moveIndex].value, previousState, capturedPiece);
 
         if (searchStoppedByTime || (ply == 0 && checkSearchDeadline(true))) {

@@ -72,6 +72,8 @@ class BitBoard {
         void unmakeMove(const Move &move, const Gamestate &prevState);
         void unmakeSearchMove(uint16_t encodedMove, const Gamestate& prevState,
                               Piece capturedPiece);
+        void makeNullMove(Gamestate& prevState);
+        void unmakeNullMove(const Gamestate& prevState);
         bool tryMove(const Move& move);
         
         uint64_t getWhitePieces() const {
