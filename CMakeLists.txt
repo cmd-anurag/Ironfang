@@ -82,13 +82,17 @@ endif()
 # cmake .. -DCMAKE_BUILD_TYPE=Release
 # cmake --build . --config Release
 
-# Windows x64
+# Windows x64 (If compiling from Linux)
 # mkdir -p build-windows
 # cd build-windows
 # cmake .. \
 #   -DCMAKE_TOOLCHAIN_FILE=../toolchain-windows.cmake \
 #   -DCMAKE_BUILD_TYPE=Release
 # cmake --build . --config Release
+
+# Windows Native (if compiling from Windows)
+# cmake -S . -B build-windows -G Ninja -DCMAKE_BUILD_TYPE=Release
+# cmake --build build-windows
 
 # Android x64
 # mkdir -p build-android
