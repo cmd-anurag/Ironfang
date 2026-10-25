@@ -78,9 +78,8 @@ void uciLoop() {
         iss >> token;
 
         if(token == "uci") {
-            printUciLine("id name Ironfangv20");
+            printUciLine("id name Ironfangv23");
             printUciLine("id author dark");
-            printUciLine("option name RootDiagnostics type check default false");
             printUciLine("option name UseOpeningBook type check default true");
             printUciLine("uciok");
         }
@@ -91,11 +90,7 @@ void uciLoop() {
             std::string valueToken;
             std::string value;
             iss >> nameToken >> optionName >> valueToken >> value;
-            if (nameToken == "name" && optionName == "RootDiagnostics" &&
-                valueToken == "value") {
-                Search::setRootDiagnostics(value == "true");
-            }
-            else if (nameToken == "name" && optionName == "UseOpeningBook" &&
+            if (nameToken == "name" && optionName == "UseOpeningBook" &&
                      valueToken == "value") {
                 useOpeningBook = value == "true";
             }
@@ -240,8 +235,8 @@ void uciLoop() {
                 }
             }
             
-            // Match the reference's fixed time allocation: 1/40 of remaining
-            // time plus 80% of the increment, with a 50 ms minimum.
+            // Allocate 1/40 of remaining time plus 80% of the increment,
+            // with a 50 ms minimum.
             int timeForMove = -1;
             
             if (movetime >= 0) {
@@ -307,14 +302,6 @@ void uciLoop() {
         else if (token == "hash") {
             stopAndJoinSearch();
             printUciLine("info string hash " + std::to_string(board.zobristKey));
-        }
-        else if (token == "legalmoves") {
-            stopAndJoinSearch();
-            const std::vector<Move> moves = Search::diagnosticLegalMoves(board);
-            std::ostringstream result;
-            result << "info string legalmoves";
-            for (const Move& move : moves) result << ' ' << moveToUCI(move);
-            printUciLine(result.str());
         }
         else if (token == "quit") {
             stopAndJoinSearch();
