@@ -252,6 +252,17 @@ Evaluated across three time controls via `python tools/solve_puzzles.py --times 
 | **250ms** | v28 | 230 / 250 (92.0%) | d7.7 | 48 / 50 | 48 / 50 | 48 / 50 | 49 / 50 | 37 / 50 (74%) |
 | | **v29** | 229 / 250 (91.6%) | **d10.6 (+2.9 plies)** | 48 / 50 | 49 / 50 | 47 / 50 | 49 / 50 | 36 / 50 (72%) |
 
+#### Standard Deeper Search Scaling (Ironfang v29)
+When tested on deeper thinking times (`python tools/solve_puzzles.py --times 100,300,1000`):
+
+| Time Tier | Solved (%) | Avg Depth | Avg Time / Puzzle | Mating (50) | Motifs (50) | Advanced (50) | Endgame (50) | Master / GM (50) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **100ms** | 227 / 250 (90.8%) | d9.4 | 78.7 ms | 48 / 50 | 49 / 50 | 47 / 50 | 48 / 50 | 35 / 50 (70%) |
+| **300ms** | 231 / 250 (92.4%) | d10.8 | 234.7 ms | 48 / 50 | 49 / 50 | 48 / 50 | 48 / 50 | 38 / 50 (76%) |
+| **1000ms (1.0s)** | **236 / 250 (94.4%)** | **d12.0** | 780.9 ms | 48 / 50 (96%) | 49 / 50 (98%) | 48 / 50 (96%) | **50 / 50 (100%)** | **41 / 50 (82%)** |
+
+*Notice: At 1 full second per puzzle, Ironfang achieves a **perfect 100% (50/50) score on Endgames** and solves **82% (41/50) of Grandmaster-level tactics**.*
+
 ---
 
 ## 5. Development Standards & Tooling
