@@ -393,7 +393,9 @@ void generateMoves(const BitBoard& board, SearchMoveOutput& moves,
 
     const Color mover = board.sideToMove;
     const Color opponent = mover == WHITE ? BLACK : WHITE;
-    const bool generateQuietMoves = !capturesOnly;
+    // Quiescence searches captures in ordinary positions, but every legal
+    // evasion must be available when the side to move is in check.
+    const bool generateQuietMoves = !capturesOnly || attacks.inCheck;
     const int kingSquare = mover == WHITE ? board.whiteKingSquare : board.blackKingSquare;
     const uint64_t friendlyPieces = mover == WHITE
         ? board.getWhitePieces() : board.getBlackPieces();
@@ -633,26 +635,31 @@ void quicksortMoves(SearchMove* moves, int* scores, int low, int high) {
     }
 }
 
-int countCurrentRepetitionOccurrences(const BitBoard& board) {
+bool isRepetitionDraw(const BitBoard& board, int ply) {
     // A pawn move or capture makes every earlier position unreachable, and
     // Zobrist identity includes side to move. Only inspect same-side positions
     // within the reversible-move window instead of rescanning the full game.
     // A repeated position needs at least four reversible plies: two moves by
     // each side to return the board and side-to-move to their original state.
-    if (board.halfmoveClock < 4) return 0;
+    if (board.halfmoveClock < 4) return false;
 
     const int currentIndex = board.pathDepth - 1;
     const int earliestRelevantIndex = std::max(0, currentIndex - board.halfmoveClock);
-    int occurrences = 0;
+    int historyOccurrences = 0;
     for (int index = currentIndex - 2; index >= earliestRelevantIndex; index -= 2) {
         ++repetitionPathEntriesScanned;
         if (board.repetitionPath[index] == board.zobristKey) {
-            ++occurrences;
-            // One earlier occurrence is enough to stop this repetition line.
-            if (occurrences >= 1) break;
+            const int distance = currentIndex - index;
+            // Within the search tree (distance <= ply), any repetition indicates
+            // an infinite cycle along this branch, so we treat it as a draw.
+            if (distance <= ply) return true;
+            // For positions that occurred before the root (in prior game history),
+            // a 3-fold repetition requires that the position appeared at least twice
+            // before, making the current move the 3rd occurrence.
+            if (++historyOccurrences >= 2) return true;
         }
     }
-    return occurrences;
+    return false;
 }
 
 
@@ -753,6 +760,9 @@ bool checkSearchDeadline(bool force = false) {
         return false;
     }
     if (searchStopRequested.load(std::memory_order_relaxed)) {
+        searchStoppedByTime.store(true, std::memory_order_relaxed);
+    }
+    if (hasHardSearchDeadline && std::chrono::steady_clock::now() >= hardSearchDeadline) {
         searchStoppedByTime.store(true, std::memory_order_relaxed);
     }
     return searchStoppedByTime.load(std::memory_order_relaxed);
@@ -881,7 +891,8 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     if (hasHardSearchDeadline) {
         hardSearchDeadline = startTime + std::chrono::milliseconds(hardTimeLimit);
     }
-    SearchDeadlineTimer deadlineTimer(hasHardSearchDeadline, hardSearchDeadline);
+    const bool useTimerThread = hasHardSearchDeadline && hardTimeLimit > 20;
+    SearchDeadlineTimer deadlineTimer(useTimerThread, hardSearchDeadline);
     
     // Keep a legal fallback for searches stopped before depth one completes.
     uint16_t bestPackedMove = 0;
@@ -933,15 +944,42 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
             break;
         }
 
-        // Search the root through the same alpha-beta path used at interior
-        // nodes, avoiding a separate root implementation.
-        iterationBestPackedMove = 0;
-        iterationBestScore = -INF;
-        hasSearchedAtLeastOneRootMove = false;
-        const int completedScore = minimaxAlphaBeta(board, depth, -INF, INF, 0, 0);
+        // Search the root using aspiration windows for depths >= 4 to narrow
+        // the alpha-beta bounds around the previous iteration's score.
+        int alpha = -INF;
+        int beta = INF;
+        int delta = 30;
+
+        if (depth >= 4 && std::abs(bestScore) < MATE_THRESHOLD) {
+            alpha = std::max(-INF, bestScore - delta);
+            beta = std::min(INF, bestScore + delta);
+        }
+
+        int completedScore = 0;
+        while (true) {
+            iterationBestPackedMove = 0;
+            iterationBestScore = -INF;
+            hasSearchedAtLeastOneRootMove = false;
+
+            completedScore = minimaxAlphaBeta(board, depth, alpha, beta, 0, 0);
+
+            if (searchStoppedByTime || searchStopRequested.load(std::memory_order_relaxed)) {
+                break;
+            }
+
+            if (completedScore <= alpha) {
+                delta += delta / 2;
+                alpha = delta > 400 ? -INF : std::max(-INF, completedScore - delta);
+            } else if (completedScore >= beta) {
+                delta += delta / 2;
+                beta = delta > 400 ? INF : std::min(INF, completedScore + delta);
+            } else {
+                break;
+            }
+        }
 
         if (searchStoppedByTime) {
-            if (hasSearchedAtLeastOneRootMove) {
+            if (hasSearchedAtLeastOneRootMove && iterationBestPackedMove != 0) {
                 bestPackedMove = iterationBestPackedMove;
                 bestScore = iterationBestScore;
                 bestPVLength = std::max(1, std::min(pvLength[0], MAX_PLY));
@@ -952,12 +990,14 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
             return decodeSearchMove(board, SearchMove(bestPackedMove));
         }
 
-        bestPackedMove = iterationBestPackedMove;
-        bestScore = completedScore;
-        previousRootBestMove = bestPackedMove;
-        bestPVLength = std::max(1, std::min(pvLength[0], MAX_PLY));
-        for (int index = 0; index < bestPVLength; ++index)
-            bestPV[index] = pvTable[0][index];
+        if (iterationBestPackedMove != 0) {
+            bestPackedMove = iterationBestPackedMove;
+            bestScore = completedScore;
+            previousRootBestMove = bestPackedMove;
+            bestPVLength = std::max(1, std::min(pvLength[0], MAX_PLY));
+            for (int index = 0; index < bestPVLength; ++index)
+                bestPV[index] = pvTable[0][index];
+        }
 
         int hashFull = TT.hashfull();
 
@@ -1029,7 +1069,14 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     const RepetitionPathEntryGuard pathEntryGuard{board, appendPathPosition};
 
     if (ply > 0 &&
-        (board.halfmoveClock >= 100 || countCurrentRepetitionOccurrences(board) >= 1)) {
+        (board.halfmoveClock >= 100 || isRepetitionDraw(board, ply))) {
+        const uint64_t whitePiecesNoPawnsKings =
+            board.getWhitePieces() ^ board.getWhitePawns() ^ (1ULL << board.whiteKingSquare);
+        const uint64_t blackPiecesNoPawnsKings =
+            board.getBlackPieces() ^ board.getBlackPawns() ^ (1ULL << board.blackKingSquare);
+        if (whitePiecesNoPawnsKings || blackPiecesNoPawnsKings) {
+            return board.sideToMove == WHITE ? -10 : 10;
+        }
         return 0;
     }
 
@@ -1175,9 +1222,13 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int ply) {
 
     if (checkSearchDeadline()) return 0;
     if (ply >= MAX_PLY - 1) return Evaluation::evaluate(board);
-    const int standPat = Evaluation::evaluate(board);
-    if (standPat >= beta) return beta;
-    alpha = std::max(alpha, standPat);
+
+    const bool inCheck = board.isInCheck();
+    if (!inCheck) {
+        const int standPat = Evaluation::evaluate(board);
+        if (standPat >= beta) return beta;
+        alpha = std::max(alpha, standPat);
+    }
 
     MoveGenerationAttackData moveGenerationData;
     auto& moves = searchMoveBuffers[ply];
@@ -1185,6 +1236,7 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int ply) {
     SearchMoveOutput moveOutput{moves.data(), 0};
     generateMoves(board, moveOutput, true, moveGenerationData);
     const int moveCount = moveOutput.count;
+    if (moveCount == 0 && inCheck) return -MATE_SCORE + ply;
     orderMoves(board, moves.data(), scores.data(), moveCount,
                0, moveGenerationData, true, 0);
 

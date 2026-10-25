@@ -12,7 +12,7 @@ if (args.Length < 2)
 }
 
 string action = args[0].ToLowerInvariant();
-Board board = action is "randomfens" or "randomaudit"
+Board board = action is "randomfens" or "randomaudit" or "san2fen"
     ? Board.CreateBoard(FenUtility.StartPositionFEN)
     : Board.CreateBoard(args[1]);
 
@@ -41,6 +41,22 @@ switch (action)
     case "hash":
         Console.WriteLine($"hash {board.CurrentGameState.zobristKey}");
         return 0;
+    case "san2fen":
+    {
+        board = Board.CreateBoard(FenUtility.StartPositionFEN);
+        string[] sanMoves = args[1].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var uciList = new List<string>();
+        foreach (var raw in sanMoves)
+        {
+            if (raw.Contains('.') || raw.StartsWith("{") || raw.EndsWith("}")) continue;
+            var move = MoveUtility.GetMoveFromSAN(board, raw);
+            uciList.Add(MoveUtility.GetMoveNameUCI(move));
+            board.MakeMove(move);
+        }
+        Console.WriteLine("fen: " + FenUtility.CurrentFen(board));
+        Console.WriteLine("uci: " + string.Join(" ", uciList));
+        return 0;
+    }
     case "randomfens":
     case "randomaudit":
     {

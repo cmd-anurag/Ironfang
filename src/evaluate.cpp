@@ -18,6 +18,7 @@ const int *PST[7] = {
 
 namespace {
 constexpr int passedPawnBonuses[7] = {0, 120, 80, 50, 30, 15, 15};
+constexpr int candidatePassedPawnBonuses[7] = {0, 48, 36, 24, 16, 10, 6};
 constexpr int isolatedPawnPenaltyByCount[9] = {0, -10, -25, -50, -75, -75, -75, -75, -75};
 constexpr int kingPawnShieldScores[6] = {4, 7, 4, 3, 6, 3};
 constexpr int endgameStartWeight = 2 * 20 + 2 * 10 + 2 * 10 + 45;
@@ -130,12 +131,16 @@ int mopUpScore(const BitBoard& board, Color side,
     return static_cast<int>(score * enemyMaterial.endgameT);
 }
 
-int pawnScore(const BitBoard& board, Color side) {
+int pawnScore(const BitBoard& board, Color side, float endgameT) {
     const uint64_t ownPawns = pawnsFor(board, side);
     const uint64_t enemyPawns = pawnsFor(board, side == WHITE ? BLACK : WHITE);
     const uint64_t* passedSpan = side == WHITE ? SPAN_SOUTH : SPAN_NORTH;
     int passedBonus = 0;
+    int candidatePassedBonus = 0;
     int isolatedCount = 0;
+
+    const int ownKing = side == WHITE ? board.whiteKingSquare : board.blackKingSquare;
+    const int enemyKing = side == WHITE ? board.blackKingSquare : board.whiteKingSquare;
     uint64_t pawns = ownPawns;
     while (pawns) {
         const int square = __builtin_ctzll(pawns);
@@ -147,11 +152,33 @@ int pawnScore(const BitBoard& board, Color side) {
             ((forwardSameFile & ~FILES[0]) >> 1) |
             ((forwardSameFile & ~FILES[7]) << 1);
         const uint64_t passedMask = forwardSameFile | forwardAdjacentFiles;
+        const int boardRank = square / 8;
+        const int squaresFromPromotion = side == WHITE ? boardRank : 7 - boardRank;
+        const int bonusIndex = std::clamp(squaresFromPromotion, 0, 6);
+        const uint64_t enemyPawnsAheadOnFile = enemyPawns & forwardSameFile;
+        const uint64_t enemyPawnsAheadOnAdjacentFiles = enemyPawns & forwardAdjacentFiles;
         if ((enemyPawns & passedMask) == 0) {
-            const int boardRank = square / 8;
-            const int squaresFromPromotion = side == WHITE ? boardRank : 7 - boardRank;
-            const int bonusIndex = std::clamp(squaresFromPromotion, 0, 6);
             passedBonus += passedPawnBonuses[bonusIndex];
+        } else if (endgameT > 0.0f && enemyPawnsAheadOnFile == 0 &&
+                   enemyPawnsAheadOnAdjacentFiles != 0) {
+            const uint64_t groupMask = FILES[file] | ADJACENT_FILES[file];
+            const int friendlyPawnsInGroup = __builtin_popcountll(ownPawns & groupMask);
+            const int enemyPawnsInGroup = __builtin_popcountll(enemyPawns & groupMask);
+            const int adjacentBlockers = __builtin_popcountll(enemyPawnsAheadOnAdjacentFiles);
+            if (friendlyPawnsInGroup > enemyPawnsInGroup || adjacentBlockers == 1) {
+                const auto chebyshevDistance = [](int first, int second) {
+                    return std::max(std::abs((first & 7) - (second & 7)),
+                                    std::abs((first / 8) - (second / 8)));
+                };
+                const int kingDistanceAdvantage =
+                    chebyshevDistance(enemyKing, square) -
+                    chebyshevDistance(ownKing, square);
+                const int kingSupportBonus =
+                    std::clamp(kingDistanceAdvantage * 8, -16, 16);
+                candidatePassedBonus += static_cast<int>(
+                    (candidatePassedPawnBonuses[bonusIndex] + kingSupportBonus) *
+                    endgameT);
+            }
         }
 
         if ((ownPawns & ADJACENT_FILES[file]) == 0) {
@@ -159,10 +186,25 @@ int pawnScore(const BitBoard& board, Color side) {
         }
     }
 
-    return passedBonus + isolatedPawnPenaltyByCount[std::min(isolatedCount, 8)];
+    return passedBonus + candidatePassedBonus +
+        isolatedPawnPenaltyByCount[std::min(isolatedCount, 8)];
+}
+
+int queenAttacksKingZone(const BitBoard& board, Color side, uint64_t kingZone) {
+    uint64_t queens = side == WHITE ? board.getWhiteQueens() : board.getBlackQueens();
+    const uint64_t occupied = board.getAllPieces();
+    int attackedSquares = 0;
+    while (queens) {
+        const int square = __builtin_ctzll(queens);
+        queens &= queens - 1;
+        attackedSquares += __builtin_popcountll(
+            board.getQueenAttacks(square, occupied) & kingZone);
+    }
+    return attackedSquares;
 }
 
 int kingPawnShield(const BitBoard& board, Color kingSide,
+                   const MaterialInfo& defendingMaterial,
                    const MaterialInfo& attackingMaterial, int enemyPieceSquareScore) {
     if (attackingMaterial.endgameT >= 1.0f) {
         return 0;
@@ -171,6 +213,7 @@ int kingPawnShield(const BitBoard& board, Color kingSide,
     const int kingSquare = kingSide == WHITE ? board.whiteKingSquare : board.blackKingSquare;
     const int kingFile = kingSquare & 7;
     const int kingRank = kingSquare / 8;
+    uint64_t kingZone = board.getKingAttacks(kingSquare) | (1ULL << kingSquare);
     const int ownPawn = kingSide == WHITE ? WP : BP;
     int shieldPenalty = 0;
     int uncastledKingPenalty = 0;
@@ -183,14 +226,18 @@ int kingPawnShield(const BitBoard& board, Color kingSide,
         for (int fileOffset = -1; fileOffset <= 1; ++fileOffset) {
             const int file = clampedFile + fileOffset;
             const int rank = kingRank + direction;
-            if (file >= 0 && file < 8 && rank >= 0 && rank < 8)
+            if (file >= 0 && file < 8 && rank >= 0 && rank < 8) {
                 shieldSquares[shieldSquareCount++] = rank * 8 + file;
+                kingZone |= 1ULL << (rank * 8 + file);
+            }
         }
         for (int fileOffset = -1; fileOffset <= 1; ++fileOffset) {
             const int file = clampedFile + fileOffset;
             const int rank = kingRank + 2 * direction;
-            if (file >= 0 && file < 8 && rank >= 0 && rank < 8)
+            if (file >= 0 && file < 8 && rank >= 0 && rank < 8) {
                 shieldSquares[shieldSquareCount++] = rank * 8 + file;
+                kingZone |= 1ULL << (rank * 8 + file);
+            }
         }
 
         for (int i = 0; i < shieldSquareCount / 2; ++i) {
@@ -204,6 +251,20 @@ int kingPawnShield(const BitBoard& board, Color kingSide,
             }
         }
         shieldPenalty *= shieldPenalty;
+        if (defendingMaterial.numQueens > 0 && attackingMaterial.numQueens > 0 &&
+            attackingMaterial.numKnights == 0 && attackingMaterial.numBishops == 0 &&
+            attackingMaterial.numRooks == 0) {
+            const Color attacker = kingSide == WHITE ? BLACK : WHITE;
+            const int attackingQueenPressure =
+                queenAttacksKingZone(board, attacker, kingZone);
+            const int defendingQueenPressure =
+                queenAttacksKingZone(board, kingSide, kingZone);
+            const int netQueenPressure =
+                std::max(0, attackingQueenPressure - defendingQueenPressure);
+            const int pressurePercent =
+                std::clamp(50 + 15 * netQueenPressure, 35, 100);
+            shieldPenalty = shieldPenalty * pressurePercent / 100;
+        }
     } else {
         const bool canStillCastle = kingSide == WHITE
             ? board.whiteKingsideCastle || board.whiteQueensideCastle
@@ -256,11 +317,13 @@ int evaluateScore(const BitBoard& board,
     const int blackPieceSquare = pieceSquareScore(board, BLACK, whiteMaterial.endgameT);
 
     const int whiteMopUp = mopUpScore(board, WHITE, whiteMaterial, blackMaterial);
-    const int whitePawn = pawnScore(board, WHITE);
-    const int whiteKingSafety = kingPawnShield(board, WHITE, blackMaterial, blackPieceSquare);
+    const int whitePawn = pawnScore(board, WHITE, blackMaterial.endgameT);
+    const int whiteKingSafety = kingPawnShield(
+        board, WHITE, whiteMaterial, blackMaterial, blackPieceSquare);
     const int blackMopUp = mopUpScore(board, BLACK, blackMaterial, whiteMaterial);
-    const int blackPawn = pawnScore(board, BLACK);
-    const int blackKingSafety = kingPawnShield(board, BLACK, whiteMaterial, whitePieceSquare);
+    const int blackPawn = pawnScore(board, BLACK, whiteMaterial.endgameT);
+    const int blackKingSafety = kingPawnShield(
+        board, BLACK, blackMaterial, whiteMaterial, whitePieceSquare);
 
     const int whiteScore = whiteMaterial.materialScore + whitePieceSquare +
         whiteMopUp + whitePawn + whiteKingSafety;

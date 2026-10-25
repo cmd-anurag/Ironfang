@@ -247,10 +247,16 @@ void uciLoop() {
                 
                 int timeLeft = (board.sideToMove == WHITE) ? wtime : btime;
                 int increment = (board.sideToMove == WHITE) ? winc : binc;
-                double plannedTime = timeLeft / 40.0;
-                if (timeLeft > increment * 2) plannedTime += increment * 0.8;
-                const double minimumThinkTime = std::min(50.0, timeLeft * 0.25);
+
+                // Move overhead / safety buffer to prevent time forfeit on pipe latency.
+                const int safetyBuffer = increment > 0 ? 10 : 25;
+                const int effectiveTimeLeft = std::max(1, timeLeft - safetyBuffer);
+
+                double plannedTime = effectiveTimeLeft / 40.0;
+                if (effectiveTimeLeft > increment * 2) plannedTime += increment * 0.8;
+                const double minimumThinkTime = std::min(50.0, effectiveTimeLeft * 0.25);
                 timeForMove = static_cast<int>(std::ceil(std::max(minimumThinkTime, plannedTime)));
+                timeForMove = std::min(timeForMove, effectiveTimeLeft);
 
             }
             int maxDepth = requestedDepth > 0 ? std::min(requestedDepth, MAX_DEPTH) : MAX_DEPTH;
