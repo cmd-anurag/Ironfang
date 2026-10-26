@@ -18,6 +18,8 @@
 // Shared search services and heuristic tables.
 std::array<std::array<uint16_t, 2>, MAX_PLY> killerMoves{};
 std::array<std::array<std::array<int, 64>, 64>, 2> historyHeuristics{};
+std::array<std::array<uint16_t, 64>, 64> counterMoves{};
+std::array<uint16_t, MAX_PLY> searchPathMoves{};
 TranspositionTable TT;
 std::mutex uciOutputMutex;
 
@@ -49,6 +51,7 @@ constexpr int WINNING_CAPTURE_BIAS = 8000000;
 constexpr int LOSING_CAPTURE_BIAS = 2000000;
 constexpr int PROMOTION_BIAS = 6000000;
 constexpr int KILLER_MOVE_BIAS = 4000000;
+constexpr int COUNTER_MOVE_BIAS = 3500000;
 constexpr int MAX_KILLER_PLY = 32;
 constexpr int MAX_SEARCH_MOVES = 218;
 
@@ -705,6 +708,16 @@ void orderMoves(BitBoard& board, SearchMove* moves, int* scores, int moveCount, 
     const uint64_t opponentAttacks = attacks.opponentAttacksNoPawns;
     const uint64_t allOpponentAttacks = opponentAttacks | opponentPawnAttacks;
 
+    uint16_t counterMove = 0;
+    if (!inQuiescence && ply > 0 && ply < MAX_PLY) {
+        const uint16_t prevMove = searchPathMoves[ply - 1];
+        if (prevMove != 0) {
+            const int pFrom = searchMoveFrom(SearchMove(prevMove));
+            const int pTo = searchMoveTo(SearchMove(prevMove));
+            counterMove = counterMoves[pFrom][pTo];
+        }
+    }
+
     for (int moveIndex = 0; moveIndex < moveCount; ++moveIndex) {
         SearchMove& searchMove = moves[moveIndex];
         int& moveScore = scores[moveIndex];
@@ -761,8 +774,11 @@ void orderMoves(BitBoard& board, SearchMove* moves, int* scores, int moveCount, 
         if (!isCapture) {
             if (!inQuiescence && ply >= 0 && ply < MAX_KILLER_PLY) {
                 if (searchMove.value == killerMoves[ply][0] ||
-                    searchMove.value == killerMoves[ply][1])
+                    searchMove.value == killerMoves[ply][1]) {
                     score += KILLER_MOVE_BIAS;
+                } else if (counterMove != 0 && searchMove.value == counterMove) {
+                    score += COUNTER_MOVE_BIAS;
+                }
             }
             score += historyHeuristics[sideIndex][from][to];
         }
@@ -814,6 +830,8 @@ uint64_t transpositionKey(const BitBoard& board) {
 void Search::newGame() {
     TT.clear();
     historyHeuristics = {};
+    counterMoves = {};
+    searchPathMoves = {};
     searchStopRequested.store(false, std::memory_order_relaxed);
     for (auto& killersAtPly : killerMoves) {
         killersAtPly[0] = 0;
@@ -1213,6 +1231,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     int quietMovesTriedCount = 0;
 
     for (int moveIndex = 0; moveIndex < moveCount; ++moveIndex) {
+        if (ply < MAX_PLY) searchPathMoves[ply] = moves[moveIndex].value;
         const Gamestate previousState = saveGameState(board);
         const int from = searchMoveFrom(moves[moveIndex]);
         const int to = searchMoveTo(moves[moveIndex]);
@@ -1278,6 +1297,15 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
                 (moves[moveIndex].value == killerMoves[ply][0] ||
                  moves[moveIndex].value == killerMoves[ply][1])) {
                 reduction = std::max(0, reduction - 1);
+            } else if (ply > 0 && ply < MAX_PLY) {
+                const uint16_t prevMove = searchPathMoves[ply - 1];
+                if (prevMove != 0) {
+                    const int pFrom = searchMoveFrom(SearchMove(prevMove));
+                    const int pTo = searchMoveTo(SearchMove(prevMove));
+                    if (moves[moveIndex].value == counterMoves[pFrom][pTo]) {
+                        reduction = std::max(0, reduction - 1);
+                    }
+                }
             }
 
             const size_t sideIdx = static_cast<size_t>(previousState.sideToMove);
@@ -1311,6 +1339,15 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
                 moves[moveIndex].value != killerMoves[ply][0]) {
                 killerMoves[ply][1] = killerMoves[ply][0];
                 killerMoves[ply][0] = moves[moveIndex].value;
+            }
+
+            if (!isCapture && ply > 0 && ply < MAX_PLY) {
+                const uint16_t prevMove = searchPathMoves[ply - 1];
+                if (prevMove != 0) {
+                    const int pFrom = searchMoveFrom(SearchMove(prevMove));
+                    const int pTo = searchMoveTo(SearchMove(prevMove));
+                    counterMoves[pFrom][pTo] = moves[moveIndex].value;
+                }
             }
             const size_t sideIndex = static_cast<size_t>(previousState.sideToMove);
             constexpr int MAX_HISTORY = 50000;
@@ -1398,6 +1435,7 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int ply) {
                0, moveGenerationData, true, 0);
 
     for (int moveIndex = 0; moveIndex < moveCount; ++moveIndex) {
+        if (ply < MAX_PLY) searchPathMoves[ply] = moves[moveIndex].value;
         const Gamestate previousState = saveGameState(board);
         const int moveFlag = moves[moveIndex].value >> 12;
         Piece capturedPiece = board.getPiece((moves[moveIndex].value >> 6) & 0x3F);
