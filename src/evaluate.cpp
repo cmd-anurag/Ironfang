@@ -215,6 +215,11 @@ int kingPawnShield(const BitBoard& board, Color kingSide,
     const int kingRank = kingSquare / 8;
     uint64_t kingZone = board.getKingAttacks(kingSquare) | (1ULL << kingSquare);
     const int ownPawn = kingSide == WHITE ? WP : BP;
+    const bool hasCastled = kingSide == WHITE ? board.whiteHasCastled : board.blackHasCastled;
+    const bool canStillCastle = kingSide == WHITE
+        ? board.whiteKingsideCastle || board.whiteQueensideCastle
+        : board.blackKingsideCastle || board.blackQueensideCastle;
+    const int castlingBonus = hasCastled ? 25 : 0;
     int shieldPenalty = 0;
     int uncastledKingPenalty = 0;
     if (kingFile <= 2 || kingFile >= 5) {
@@ -265,27 +270,26 @@ int kingPawnShield(const BitBoard& board, Color kingSide,
                 std::clamp(50 + 15 * netQueenPressure, 35, 100);
             shieldPenalty = shieldPenalty * pressurePercent / 100;
         }
-    } else {
-        const bool canStillCastle = kingSide == WHITE
-            ? board.whiteKingsideCastle || board.whiteQueensideCastle
-            : board.blackKingsideCastle || board.blackQueensideCastle;
+    }
+
+    if (!hasCastled) {
         const float enemyDevelopmentScore = std::clamp(
             (enemyPieceSquareScore + 10) / 130.0f, 0.0f, 1.0f);
         if (canStillCastle) {
-            // This incentive is for keeping castling available. Once both
-            // rights are gone, don't reward a king walk toward an unavailable
-            // corner; assess its shelter and file exposure below instead.
-            uncastledKingPenalty = static_cast<int>(50 * enemyDevelopmentScore);
+            // Incentive for keeping castling available.
+            uncastledKingPenalty = static_cast<int>(35 * enemyDevelopmentScore);
         } else {
-            // King is permanently stranded in the center with both castling rights lost.
-            uncastledKingPenalty = static_cast<int>(60 * enemyDevelopmentScore) + 25;
+            // King voluntarily surrendered both castling rights without castling.
+            uncastledKingPenalty = static_cast<int>(50 * enemyDevelopmentScore) + 35;
         }
 
-        // Severe vulnerability if the king's central file has no friendly pawn shield.
-        const uint64_t kingFileMask = FILES[kingFile];
-        if ((defendingMaterial.pawns & kingFileMask) == 0) {
-            const bool noEnemyPawn = (attackingMaterial.pawns & kingFileMask) == 0;
-            uncastledKingPenalty += noEnemyPawn ? 70 : 40;
+        // Severe vulnerability if uncastled king is on a central file without pawn shield.
+        if (kingFile >= 2 && kingFile <= 5) {
+            const uint64_t kingFileMask = FILES[kingFile];
+            if ((defendingMaterial.pawns & kingFileMask) == 0) {
+                const bool noEnemyPawn = (attackingMaterial.pawns & kingFileMask) == 0;
+                uncastledKingPenalty += noEnemyPawn ? 60 : 35;
+            }
         }
     }
 
@@ -334,7 +338,7 @@ int kingPawnShield(const BitBoard& board, Color kingSide,
     }
 
     return static_cast<int>(
-        (-shieldPenalty - uncastledKingPenalty - openFilePenalty - developmentPenalty) * weight);
+        (castlingBonus - shieldPenalty - uncastledKingPenalty - openFilePenalty - developmentPenalty) * weight);
 }
 
 int rookScore(const BitBoard& board, Color side) {

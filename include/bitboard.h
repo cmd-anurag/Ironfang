@@ -20,6 +20,8 @@ class BitBoard {
         bool whiteQueensideCastle;
         bool blackKingsideCastle;
         bool blackQueensideCastle;
+        bool whiteHasCastled = false;
+        bool blackHasCastled = false;
 
         int whiteKingSquare;
         int blackKingSquare;

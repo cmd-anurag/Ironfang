@@ -215,7 +215,9 @@ Gamestate saveGameState(const BitBoard& board) {
         board.whiteKingSquare,
         board.blackKingSquare,
         board.zobristKey,
-        board.halfmoveClock
+        board.halfmoveClock,
+        board.whiteHasCastled,
+        board.blackHasCastled
     };
 }
 

@@ -125,6 +125,8 @@ void BitBoard::setStartPosition() {
     whiteQueensideCastle = true;
     blackKingsideCastle = true;
     blackQueensideCastle = true;
+    whiteHasCastled = false;
+    blackHasCastled = false;
 
     whiteKingSquare = 60; // e1
     blackKingSquare = 4;  // e8
@@ -678,7 +680,8 @@ bool BitBoard::makeMove(const Move &move) {
         sideToMove, enPassantSquare,
         whiteKingsideCastle, whiteQueensideCastle,
         blackKingsideCastle, blackQueensideCastle,
-        whiteKingSquare, blackKingSquare, zobristKey, halfmoveClock
+        whiteKingSquare, blackKingSquare, zobristKey, halfmoveClock,
+        whiteHasCastled, blackHasCastled
     };
     Piece capturedPiece = NONE;
     const uint16_t encodedMove = encodeCompactMove(move);
@@ -742,6 +745,8 @@ void BitBoard::makeSearchMove(uint16_t encodedMove, Piece& capturedPiece) {
         clearSquare(rookFrom);
         setPiece(placedPiece, to);
         setPiece(rook, rookTo);
+        if (white) whiteHasCastled = true;
+        else blackHasCastled = true;
     } else {
         xorPiece(zobristKey, placedPiece, to);
         setPiece(placedPiece, to);
@@ -826,6 +831,8 @@ void BitBoard::unmakeSearchMove(uint16_t encodedMove, const Gamestate& prevState
     whiteQueensideCastle = prevState.whiteQueensideCastle;
     blackKingsideCastle = prevState.blackKingsideCastle;
     blackQueensideCastle = prevState.blackQueensideCastle;
+    whiteHasCastled = prevState.whiteHasCastled;
+    blackHasCastled = prevState.blackHasCastled;
     whiteKingSquare = prevState.whiteKingSquare;
     blackKingSquare = prevState.blackKingSquare;
     enPassantSquare = prevState.enPassantSquare;
@@ -896,6 +903,7 @@ bool BitBoard::applyMove(const Move &move, bool validateKingSafety) {
             whiteKingSquare = 62;
             whiteKingsideCastle = false;
             whiteQueensideCastle = false;
+            whiteHasCastled = true;
 
             // Zobrist changes
             xorPiece(zobristKey, WK, 60);
@@ -911,6 +919,7 @@ bool BitBoard::applyMove(const Move &move, bool validateKingSafety) {
             blackKingSquare = 6;
             blackKingsideCastle = false;
             blackQueensideCastle = false;
+            blackHasCastled = true;
 
             // Zobrist changes
             xorPiece(zobristKey, BK, 4);
@@ -928,6 +937,7 @@ bool BitBoard::applyMove(const Move &move, bool validateKingSafety) {
             whiteKingSquare = 58;
             whiteKingsideCastle = false;
             whiteQueensideCastle = false;
+            whiteHasCastled = true;
 
             // Zobrist Changes
             xorPiece(zobristKey, WK, 60);
@@ -943,6 +953,7 @@ bool BitBoard::applyMove(const Move &move, bool validateKingSafety) {
             blackKingSquare = 2;
             blackKingsideCastle = false;
             blackQueensideCastle = false;
+            blackHasCastled = true;
 
             // Zobrist Changes
             xorPiece(zobristKey, BK, 4);
@@ -1081,6 +1092,8 @@ void BitBoard::unmakeMove(const Move &move, const Gamestate &prevState) {
     whiteQueensideCastle = prevState.whiteQueensideCastle;
     blackKingsideCastle = prevState.blackKingsideCastle;
     blackQueensideCastle = prevState.blackQueensideCastle;
+    whiteHasCastled = prevState.whiteHasCastled;
+    blackHasCastled = prevState.blackHasCastled;
     whiteKingSquare = prevState.whiteKingSquare;
     blackKingSquare = prevState.blackKingSquare;
     enPassantSquare = prevState.enPassantSquare;
@@ -1230,6 +1243,10 @@ bool BitBoard::setPositionFromFEN(const std::string& fen) {
             }
         }
     }
+    whiteHasCastled = (!whiteKingsideCastle && !whiteQueensideCastle &&
+                      (whiteKingSquare == 62 || whiteKingSquare == 58 || whiteKingSquare == 57));
+    blackHasCastled = (!blackKingsideCastle && !blackQueensideCastle &&
+                      (blackKingSquare == 6 || blackKingSquare == 2 || blackKingSquare == 1));
     enPassantSquare = -1;
     if (ep != "-") {
         if (ep.size() != 2 || ep[0] < 'a' || ep[0] > 'h' || ep[1] < '1' || ep[1] > '8') return fail();
