@@ -311,6 +311,17 @@ void uciLoop() {
             stopAndJoinSearch();
             printUciLine("info string hash " + std::to_string(board.zobristKey));
         }
+        else if (token == "see") {
+            stopAndJoinSearch();
+            std::string moveStr;
+            if (iss >> moveStr) {
+                Move m = uciToMove(moveStr, board);
+                if (m.from >= 0) {
+                    bool res = board.see(m.from, m.to, m.piece, m.capture, 0);
+                    printUciLine(std::string("info string see ") + (res ? ">= 0" : "< 0"));
+                }
+            }
+        }
         else if (token == "quit") {
             stopAndJoinSearch();
             break;

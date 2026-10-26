@@ -73,15 +73,35 @@ At depth 8, optimal Alpha-Beta visits only $\approx 1.5 \times 10^6$ nodes inste
 ### 1.3 Move Ordering & Branching Factor Reduction
 The speedup of Alpha-Beta depends entirely on **searching the strongest move first**. If the first move examined at a node causes a beta cutoff, the remaining ~34 legal moves are discarded without search.
 
-Ironfang establishes move priority using four distinct heuristics:
+Ironfang establishes move priority using five distinct heuristics:
 1. **Hash Move**: The best move retrieved from the Transposition Table (priority $+100,000$).
-2. **Winning / Equal Captures (MVV-LVA)**: *Most Valuable Victim – Least Valuable Attacker*. Evaluated as:
-   $$\Delta_{\text{capture}} = V(\text{victim}) - V(\text{attacker})$$
-   A Pawn capturing a Queen ($P \times Q$, $\Delta = +800$) is examined before a Queen capturing a Pawn ($Q \times P$, $\Delta = -800$).
+2. **Winning & Equal Captures (MVV-LVA & SEE)**:
+   - High-confidence winning captures ($V_{\text{victim}} \ge V_{\text{attacker}}$ on unattacked squares) skip expensive ray lookups.
+   - Contested or lower-value captures query the **Static Exchange Evaluation (SEE)** routine `board.see(from, to, piece, capturedPiece, 0)`.
+   - Captures with $\text{SEE} \ge 0$ (winning or equal material exchanges) are boosted with `WINNING_CAPTURE_BIAS` ($+8,000$) plus $\Delta_{\text{capture}}$, searching ahead of all quiet moves and killer moves.
+   - Captures with $\text{SEE} < 0$ (losing sacrifices / hung pieces) are demoted with `LOSING_CAPTURE_BIAS` ($-2,000$), searching strictly behind killer moves.
 3. **Killer Moves**: Up to 2 non-capturing moves per ply that previously caused a beta cutoff in an adjacent sibling node (`killerMoves[ply][0]` and `killerMoves[ply][1]`).
 4. **History Heuristic & Malus**: A table `historyHeuristics[color][from][to]` bounded within $[-50000, +50000]$:
    - **Bonus**: When a quiet move refutes a branch (causes a beta cutoff), it receives $+\min(400, \text{depth}^2)$.
    - **Malus**: All preceding quiet moves tried at the same node that failed to achieve a cutoff receive $-\min(400, \text{depth}^2)$. This actively suppresses quiet moves that repeatedly fail to refute branches.
+5. **Positional PST & Attack Penalties**: Quiet moves are ordered by delta piece-square table gains minus safety penalties for landing on squares attacked by enemy pawns ($-50$) or enemy pieces ($-25$).
+
+### 1.4 Static Exchange Evaluation (SEE): The Swap Algorithm
+The Static Exchange Evaluation algorithm evaluates a proposed capture sequence on a single target square without recursive tree expansion. It simulates a sequence of alternating recaptures by the least valuable attacker (LVA):
+
+1. **Initial Swap Balance**:
+   $$\text{swap}_0 = V(\text{victim}) - \text{threshold}$$
+   If $\text{swap}_0 < 0$, the move cannot reach the required threshold even without recapture.
+2. **First Recapture Check**:
+   $$\text{swap}_1 = V(\text{attacker}) - \text{swap}_0$$
+   If $\text{swap}_1 \le 0$, the opponent cannot break even even by recapturing. The exchange is guaranteed to meet the threshold, allowing immediate early exit without further attack ray casting.
+3. **Iterative Minimax Exchange Loop**:
+   - The occupancy bitboard removes the capturing piece: $\text{occupied} \leftarrow \text{occupied} \setminus \{\text{from}\}$.
+   - Revealing sliding attacks behind vacated squares (bishops, rooks, queens) updates the set of active attackers dynamically.
+   - The side to move queries its least valuable attacker bitboard:
+     $$\text{LVA} \in \{\text{Pawns}, \text{Knights}, \text{Bishops}, \text{Rooks}, \text{Queens}, \text{King}\}$$
+   - The running balance updates negamax-style: $\text{swap} \leftarrow V(\text{LVA}) - \text{swap}$. If $\text{swap} < \text{res}$, the defending side stands pat and breaks.
+   - King captures verify that the opponent possesses no remaining attackers to prevent illegal capture through check.
 
 ---
 

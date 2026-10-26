@@ -137,6 +137,8 @@ class BitBoard {
         uint64_t getKnightAttacks(int square) const;
         uint64_t getKingAttacks(int square) const;
         uint64_t getPawnAttacks(int square, Color color) const;
+        uint64_t getAttackersTo(int square, uint64_t occupied) const;
+        bool see(int from, int to, int movingPiece, int capturedPiece, int threshold = 0) const;
         
 
     private:

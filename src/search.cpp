@@ -727,14 +727,18 @@ void orderMoves(BitBoard& board, SearchMove* moves, int* scores, int moveCount, 
         if (isCapture) {
             const int capturedType = capturedPiece & 7;
             const int captureDelta = Evaluation::pieceValue[capturedType] - movingValue;
-            // Favor profitable captures over quiet promotions and keep losing
-            // captures behind killer moves in the ordering.
-            const bool attacked = (allOpponentAttacks & (1ULL << to)) != 0;
-            if (attacked) {
-                score += (captureDelta >= 0 ? WINNING_CAPTURE_BIAS : LOSING_CAPTURE_BIAS) +
-                         captureDelta;
-            } else {
+
+            // Static Exchange Evaluation (SEE) for capture classification:
+            // High-confidence winning captures (V >= A on unattacked square) skip SEE.
+            // Contested or lower-value captures query SEE to separate winning/equal
+            // exchanges from losing captures.
+            const bool winningExchange = (captureDelta >= 0 && !(allOpponentAttacks & (1ULL << to)))
+                || board.see(from, to, piece, capturedPiece, 0);
+
+            if (winningExchange) {
                 score += WINNING_CAPTURE_BIAS + captureDelta;
+            } else {
+                score += LOSING_CAPTURE_BIAS + captureDelta;
             }
         }
 

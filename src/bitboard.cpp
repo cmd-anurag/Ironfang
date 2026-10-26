@@ -189,6 +189,96 @@ bool BitBoard::isSquareAttacked(int square, Color opponentColor, uint64_t occupi
     return false;
 }
 
+uint64_t BitBoard::getAttackersTo(int square, uint64_t occupied) const {
+    return (getPawnAttacks(square, BLACK) & whitePawns)
+         | (getPawnAttacks(square, WHITE) & blackPawns)
+         | (getKnightAttacks(square) & (whiteKnights | blackKnights))
+         | (getBishopAttacks(square, occupied) & (whiteBishops | blackBishops | whiteQueens | blackQueens))
+         | (getRookAttacks(square, occupied) & (whiteRooks | blackRooks | whiteQueens | blackQueens))
+         | (getKingAttacks(square) & (whiteKing | blackKing));
+}
+
+bool BitBoard::see(int from, int to, int movingPiece, int capturedPiece, int threshold) const {
+    constexpr int seeValues[8] = {0, 100, 300, 320, 500, 900, 20000, 0};
+
+    int swap = seeValues[capturedPiece & 7] - threshold;
+    if (swap < 0) {
+        return false;
+    }
+
+    swap = seeValues[movingPiece & 7] - swap;
+    if (swap <= 0) {
+        return true;
+    }
+
+    uint64_t occupied = getAllPieces() ^ (1ULL << from);
+    if (capturedPiece != NONE && squareContents[to] == NONE) {
+        // En passant capture: remove the captured pawn from its adjacent square
+        const int epPawnSquare = (movingPiece == WP) ? to + 8 : to - 8;
+        occupied ^= (1ULL << epPawnSquare);
+    }
+    occupied &= ~(1ULL << to);
+
+    Color stm = static_cast<Color>(1 - getPieceColor(static_cast<Piece>(movingPiece)));
+    uint64_t attackers = getAttackersTo(to, occupied);
+    int res = 1;
+
+    const uint64_t diagSliders = whiteBishops | blackBishops | whiteQueens | blackQueens;
+    const uint64_t orthSliders = whiteRooks | blackRooks | whiteQueens | blackQueens;
+
+    while (true) {
+        attackers &= occupied;
+        const uint64_t stmAttackers = attackers & (stm == WHITE ? getWhitePieces() : getBlackPieces());
+
+        if (!stmAttackers) {
+            break;
+        }
+
+        res ^= 1;
+
+        uint64_t bb;
+        if ((bb = stmAttackers & (stm == WHITE ? whitePawns : blackPawns))) {
+            if ((swap = seeValues[PT_PAWN] - swap) < res) break;
+            const int sq = __builtin_ctzll(bb);
+            occupied ^= (1ULL << sq);
+            attackers |= (getBishopAttacks(to, occupied) & diagSliders);
+        }
+        else if ((bb = stmAttackers & (stm == WHITE ? whiteKnights : blackKnights))) {
+            if ((swap = seeValues[PT_KNIGHT] - swap) < res) break;
+            const int sq = __builtin_ctzll(bb);
+            occupied ^= (1ULL << sq);
+        }
+        else if ((bb = stmAttackers & (stm == WHITE ? whiteBishops : blackBishops))) {
+            if ((swap = seeValues[PT_BISHOP] - swap) < res) break;
+            const int sq = __builtin_ctzll(bb);
+            occupied ^= (1ULL << sq);
+            attackers |= (getBishopAttacks(to, occupied) & diagSliders);
+        }
+        else if ((bb = stmAttackers & (stm == WHITE ? whiteRooks : blackRooks))) {
+            if ((swap = seeValues[PT_ROOK] - swap) < res) break;
+            const int sq = __builtin_ctzll(bb);
+            occupied ^= (1ULL << sq);
+            attackers |= (getRookAttacks(to, occupied) & orthSliders);
+        }
+        else if ((bb = stmAttackers & (stm == WHITE ? whiteQueens : blackQueens))) {
+            if ((swap = seeValues[PT_QUEEN] - swap) < res) break;
+            const int sq = __builtin_ctzll(bb);
+            occupied ^= (1ULL << sq);
+            attackers |= (getBishopAttacks(to, occupied) & diagSliders)
+                       | (getRookAttacks(to, occupied) & orthSliders);
+        }
+        else { // King
+            const Color otherSide = static_cast<Color>(1 - stm);
+            const uint64_t otherSideAttackers = attackers & (otherSide == WHITE ? getWhitePieces() : getBlackPieces());
+            return otherSideAttackers ? (res ^ 1) : res;
+        }
+
+        stm = static_cast<Color>(1 - stm);
+    }
+
+    return bool(res);
+}
+
 bool BitBoard::isInCheck() const {
     if (!hasCachedInCheck) {
         const int kingSquare = sideToMove == WHITE ? whiteKingSquare : blackKingSquare;
