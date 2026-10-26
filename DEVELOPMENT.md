@@ -250,8 +250,29 @@ A candidate release for Ironfang v32 was developed and put through the standard 
 - **Experiment 2 (MrTonnerre King Walk Autopsy & $f1$ PST Modification)**:
   - White's move `11. Kf1?!` in `4zp7OsMz` was autopsied: at depth 3+, search hallucinated that `11. Kf1` traps Black's bishop after `11... Bd6 12. Be3 Bxh2 13. Bxc5 Qxc5 14. Rxh2` (with the rook on $h1$ protected by the king on $f1$).
   - Artificially changing $f1$ from $+10$ to $-10$ broke the symmetry of the PST table and distorted king evaluation whenever driven to $f1$, degrading self-play.
-- **Decision**: In strict accordance with the regression protocol, **both changes were rejected and reverted**. `D:/lichess-bot/engines/ironfang.exe` remains on the proven **v31** release, preserving full speed ($\pm 0.5\%$ NPS vs v31 baseline) and positive Elo.
+- **Decision**: In strict accordance with the regression protocol, **both candidate changes were rejected and reverted** in commit `67deb78`.
 - The clean, unit-tested `BitBoard::see` implementation is retained in the codebase as a foundation for future capture pruning experiments in the main search tree ($SEE < -50 \times d$).
+
+### 3.6 Version 32 (Released 2026-10-26)
+- **Key Enhancements**:
+  1. **Structural Castling State & King Safety Fix**:
+     - Root cause of artificial king-walk blunder `11. Kf1?!` in `4zp7OsMz`: `kingFile >= 5` had classified the king on $f1$ as safely castled on the flank, completely wiping out the uncastled penalty.
+     - Added explicit `whiteHasCastled` and `blackHasCastled` tracking to `Gamestate` and `BitBoard`.
+     - Awarded $+25\text{ cp}$ bonus (`castlingBonus`) for genuine castling and applied a $-35\text{ cp}$ penalty (+ development penalty) for voluntary forfeiture of both castling rights without castling.
+     - Restricted central uncastled file vulnerability strictly to central files $c, d, e, f$ (`kingFile >= 2 && kingFile <= 5`), preserving complete PST symmetry.
+  2. **Counter-Move Heuristic & LMR Exemption**:
+     - Added an $8\text{ KB}$ `counterMoves[64][64]` table recording the quiet move that historically refuted the opponent's previous move (`searchPathMoves[ply - 1]`).
+     - Prioritized counter-moves immediately after killer moves in move ordering (`COUNTER_MOVE_BIAS = 3500000`).
+     - Granted an LMR reduction discount (`reduction = max(0, reduction - 1)`) for counter-moves, preserving tactical vision on known refutations.
+- **5-Tier Regression Verification**:
+  - **Tier 1 (Previous Version Head-to-Head)**: **7.0 / 10 (+5 -1 =4, +147.2 Elo, LOS: 94.9%)** vs production v31 at `10+0.1`.
+  - **Tier 2 (Reference Engine Match)**: **5.5 / 6.0 (+5 -0 =1, +416.6 Elo)** with 0 losses.
+  - **Tier 3 (Tactical Puzzle Suite)**: **235 / 250 (94.0%)** at 250ms, **230 / 250 (92.0%)** at 100ms.
+  - **Tier 4 (Known Blunders Suite)**: **5 / 5 passed (100.0%)**, zero blunders repeated (`11. Kf1` eliminated).
+  - **Tier 5 (Speed Benchmark)**: Search depth maintained/improved with flat NPS.
+- **Artifacts & Deployment**:
+  - Binary archived: `D:/engines/v32/v32.exe` (269,850 bytes).
+  - Production deployment: `D:/lichess-bot/engines/ironfang.exe`.
 
 ---
 
@@ -277,6 +298,7 @@ All milestone executables are permanently archived by version in `D:/engines/`:
 - `D:/engines/v29/v29.exe`
 - `D:/engines/v30/v30.exe`
 - `D:/engines/v31/v31.exe`
+- `D:/engines/v32/v32.exe`
 
 *(Rule: File copy commands to `D:/engines/` must never use `-Force` to prevent accidental overwrites).*
 
