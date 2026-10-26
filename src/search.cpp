@@ -1165,6 +1165,10 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     orderMoves(board, moves.data(), scores.data(), moveCount, moveOrderHint, moveGenerationData, false, ply);
 
     uint16_t bestPackedMove = 0;
+    int quietMovesCount = 0;
+    std::array<SearchMove, 64> quietMovesTried{};
+    int quietMovesTriedCount = 0;
+
     for (int moveIndex = 0; moveIndex < moveCount; ++moveIndex) {
         const Gamestate previousState = saveGameState(board);
         const int from = searchMoveFrom(moves[moveIndex]);
@@ -1200,6 +1204,23 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
             }
         }
 
+        // Late Move Pruning (LMP)
+        if (depth <= 3 && ply > 0 && !inCheck && !isCapture && !isPromotion && !givesCheck &&
+            alpha > -MATE_THRESHOLD) {
+            const int lmpLimit = 3 + 3 * depth * depth;
+            if (quietMovesCount >= lmpLimit) {
+                board.unmakeSearchMove(moves[moveIndex].value, previousState, capturedPiece);
+                continue;
+            }
+        }
+
+        if (!isCapture && !isPromotion) {
+            ++quietMovesCount;
+            if (quietMovesTriedCount < 64) {
+                quietMovesTried[quietMovesTriedCount++] = moves[moveIndex];
+            }
+        }
+
         const bool reduceMove = extension == 0 && depth >= 3 &&
             moveIndex >= 3 && !isCapture;
 
@@ -1224,9 +1245,28 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
                 killerMoves[ply][0] = moves[moveIndex].value;
             }
             const size_t sideIndex = static_cast<size_t>(previousState.sideToMove);
+            constexpr int MAX_HISTORY = 50000;
+            const int bonus = std::min(400, depth * depth);
+
             if (!isCapture) {
                 int& history = historyHeuristics[sideIndex][from][to];
-                history += depth * depth;
+                history = std::min(MAX_HISTORY, history + bonus);
+
+                for (int i = 0; i < quietMovesTriedCount; ++i) {
+                    if (quietMovesTried[i].value != moves[moveIndex].value) {
+                        const int prevFrom = searchMoveFrom(quietMovesTried[i]);
+                        const int prevTo = searchMoveTo(quietMovesTried[i]);
+                        int& prevHist = historyHeuristics[sideIndex][prevFrom][prevTo];
+                        prevHist = std::max(-MAX_HISTORY, prevHist - bonus);
+                    }
+                }
+            } else {
+                for (int i = 0; i < quietMovesTriedCount; ++i) {
+                    const int prevFrom = searchMoveFrom(quietMovesTried[i]);
+                    const int prevTo = searchMoveTo(quietMovesTried[i]);
+                    int& prevHist = historyHeuristics[sideIndex][prevFrom][prevTo];
+                    prevHist = std::max(-MAX_HISTORY, prevHist - bonus);
+                }
             }
             TT.store(transpositionKey(board), depth,
                      scoreForTranspositionTable(beta, ply), TT_LOWER,

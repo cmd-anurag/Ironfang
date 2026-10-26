@@ -121,6 +121,22 @@ Evaluated up to 1 full second per puzzle via `python tools/solve_puzzles.py --ti
 
 ---
 
+### 3.4 Search Upgrades: Late Move Pruning (LMP) & History Malus
+Implemented in `src/search.cpp`:
+- **Late Move Pruning (LMP)**: At `depth <= 3`, prunes quiet non-checking moves once $3 + 3 \times \text{depth}^2$ quiet candidates have been evaluated without finding a cutoff.
+- **History Malus**: When a quiet move refutes a branch, awards $+\min(400, \text{depth}^2)$ to the refutation while penalizing all preceding failed quiet moves with $-\min(400, \text{depth}^2)$ (bounded within $[-50000, +50000]$).
+
+#### Empirical Comparison (LMP + Malus vs. v29 Baseline)
+Evaluated across 250 curated puzzles (`python tools/solve_puzzles.py --times 25,100,250`):
+- **100ms Tier**: Solved **229 / 250 (91.6%)** vs v29's 228 / 250 (+1 puzzle). Average nodes dropped from **189,344 to 166,759 (-11.9% node savings)**. Average depth increased to **d9.6**.
+- **250ms Tier**: Solved **232 / 250 (92.8%)** vs v29's 231 / 250 (+1 puzzle). Average nodes dropped from **458,025 to 377,847 (-17.5% node savings)**. Average depth increased to **d10.6**.
+
+#### Head-to-Head Cutechess Match Play vs. v29 Baseline
+Executed at standard `10+0.1` blitz time control:
+- **Ironfang (LMP+Malus) vs. Ironfang v29**: **3.5 – 2.5 (+2 =3 -1, 58.3%)** $\implies$ **+58.5 Elo over v29 (LOS: 71.8%)**.
+
+---
+
 ## 4. Development Standards & Tooling
 
 ### 4.1 Binary Compilation & Release Archive
@@ -166,7 +182,11 @@ All milestone executables are permanently archived by version in `D:/engines/`:
    - Fast material/HCE evaluation on simple positions, blended with NNUE on complex tactical middlegames.
 
 ### Phase 2: Advanced Search Refinements
-1. **Logarithmic LMR Table**: Replace flat 1-ply reduction with depth- and move-index-based reduction tables:
-   $$R = 1 + \frac{\ln(\text{depth}) \times \ln(\text{moveIndex})}{2}$$
-2. **Late Move Pruning (LMP)**: At depth $\le 3$, prune quiet moves after searching the first $3 + 3 \times \text{depth}^2$ moves.
-3. **History Malus / Penalties**: Penalize quiet moves that fail to produce a cutoff.
+1. [x] **Late Move Pruning (LMP)**: At depth $\le 3$, prune quiet moves after searching the first $3 + 3 \times \text{depth}^2$ moves. (Completed: +58.5 Elo vs v29)
+2. [x] **History Malus / Penalties**: Penalize quiet moves that fail to produce a cutoff. (Completed)
+3. [ ] **Logarithmic LMR Table**: Replace flat 1-ply reduction with depth- and move-index-based reduction tables:
+   $$R = 0.75 + \frac{\ln(\text{depth}) \times \ln(\text{moveIndex})}{2.25}$$
+4. [ ] **Positional Evaluation Refinements**:
+   - Rooks on open and semi-open files.
+   - Knight outposts protected by pawns.
+   - Backward pawn penalties.

@@ -20,6 +20,7 @@ A complete, formal theoretical reference for the search algorithms, pruning heur
    - [4.1 Reverse Futility Pruning (RFP / Static Null Move Pruning)](#41-reverse-futility-pruning-rfp--static-null-move-pruning)
    - [4.2 Null Move Pruning (NMP) & Zugzwang Prevention](#42-null-move-pruning-nmp--zugzwang-prevention)
    - [4.3 Frontier Futility Pruning (FP)](#43-frontier-futility-pruning-fp)
+   - [4.4 Late Move Pruning (LMP)](#44-late-move-pruning-lmp--move-count-pruning)
 5. [Search Reductions & Scout Windows](#5-search-reductions--scout-windows)
    - [5.1 Principal Variation Search (PVS / NegaScout)](#51-principal-variation-search-pvs--negascout)
    - [5.2 Late Move Reductions (LMR)](#52-late-move-reductions-lmr)
@@ -75,7 +76,9 @@ Ironfang establishes move priority using four distinct heuristics:
    $$\Delta_{\text{capture}} = V(\text{victim}) - V(\text{attacker})$$
    A Pawn capturing a Queen ($P \times Q$, $\Delta = +800$) is examined before a Queen capturing a Pawn ($Q \times P$, $\Delta = -800$).
 3. **Killer Moves**: Up to 2 non-capturing moves per ply that previously caused a beta cutoff in an adjacent sibling node (`killerMoves[ply][0]` and `killerMoves[ply][1]`).
-4. **History Heuristic**: A table `historyHeuristics[color][from][to]` incremented by $\text{depth}^2$ whenever a quiet move successfully refutes a branch.
+4. **History Heuristic & Malus**: A table `historyHeuristics[color][from][to]` bounded within $[-50000, +50000]$:
+   - **Bonus**: When a quiet move refutes a branch (causes a beta cutoff), it receives $+\min(400, \text{depth}^2)$.
+   - **Malus**: All preceding quiet moves tried at the same node that failed to achieve a cutoff receive $-\min(400, \text{depth}^2)$. This actively suppresses quiet moves that repeatedly fail to refute branches.
 
 ---
 
@@ -155,6 +158,15 @@ In chess, having the turn is almost always an advantage. If the side to move **p
 At frontier nodes ($\text{depth} == 1$), when not in check:
 $$\text{If } \text{staticEval} + 150 \le \alpha \implies \text{Prune quiet move}$$
 A quiet piece move to an empty square that does not give check or promote cannot plausibly swing the evaluation by more than $150\text{ cp}$ in one ply. If $\text{staticEval} + 150$ cannot even reach $\alpha$, the move is guaranteed to fail low and is skipped before calling child search.
+
+### 4.4 Late Move Pruning (LMP / Move Count Pruning)
+In positions near the leaves of the tree ($\text{depth} \le 3$), when not in check and not in a mate-score search:
+$$\text{Quiet Move Threshold: } L = 3 + 3 \times \text{depth}^2$$
+- At $\text{depth} = 1$: $L = 6$ quiet moves.
+- At $\text{depth} = 2$: $L = 15$ quiet moves.
+- At $\text{depth} = 3$: $L = 30$ quiet moves.
+
+Once the move ordering has evaluated $L$ quiet candidate moves without finding a refutation or improvement above $\alpha$, any further quiet non-checking moves have a vanishingly small probability ($<0.05\%$) of being superior. They are pruned directly without searching the child tree. Tactical moves (captures, promotions, and checks) are strictly exempt.
 
 ---
 
