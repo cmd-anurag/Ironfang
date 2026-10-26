@@ -197,15 +197,23 @@ Evaluated at Move 14 after 14. b4 (where Ironfang in the real game played `14...
 - **v29**: `bestmove c5b4` (-18 cp, depth 12, 2.7M nodes)
 - **v30**: **`bestmove b7b6`** (-27 cp, **depth 14**, 2.2M nodes) $\implies$ **Rejects `cxb4`**, solidifies the pawn chain, keeps the $a$-file closed, and denies White any rook penetration!
 
+#### Athena-ChessBot Rematch Game (`WXQrrUuA`) Autopsy
+In the live rematch, Ironfang played White against Athena-ChessBot:
+- **Middlegame Dominance**: Ironfang decisively outplayed Athena (+5.4 pawns up with an outside passed $a$-pawn and active rook).
+- **The Endgame Repetition Draw (Move 53)**: Facing checking rooks, Ironfang repeated `49. Ke4 Re1+ 50. Kf5 Ra1 51. Ke4 Re1+ 52. Kf5 Ra1 53. Ke4?? Re1+`, allowing Athena to claim a 3-fold repetition draw while completely winning.
+- **Root Cause Identified**: The Transposition Table retained the $+346\text{ cp}$ score from Move 51. At Move 53, the TT hit caused an immediate cutoff returning $+346\text{ cp}$, failing to notice that re-entering that position now constituted the 3rd repetition.
+- **Regression Tracking**: Position archived into [`tools/known_blunders.csv`](tools/known_blunders.csv) for continuous regression testing.
+
 ---
 
 ## 4. Development Standards & Tooling
 
 ### 4.1 Standard Regression Protocol
-Every newly compiled milestone must complete the three-tier regression harness before deployment:
+Every newly compiled milestone must complete the four-tier regression harness before deployment:
 1. **Previous Version Match**: 10 games against `v<N-1>` at `10+0.1` via Cutechess CLI.
 2. **Reference Engine Match**: 6 games against Reference Engine at `10+0.1` via Cutechess CLI.
 3. **Tactical Puzzle Suite**: 250 curated puzzles evaluated at `25ms`, `100ms`, and `250ms` via `tools/solve_puzzles.py`.
+4. **Known Blunders Suite**: Verification against all historically identified blunder and loss positions via `python tools/test_known_blunders.py --engine <exe>`.
 
 ### 4.2 Binary Compilation & Release Archive
 Compile using CMake and Ninja on Windows x64:

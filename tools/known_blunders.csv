@@ -1,0 +1,5 @@
+id,game_id,move_num,side,fen,blunder_move,good_moves,description
+athena1_m14,omjbaV8R,14,b,r2q1rk1/pp1b1ppp/2np1b2/3Np3/1PB1P3/P4N1P/2P2PP1/R2Q1RK1 b - - 0 14,c5b4,b7b6;d7e6,Avoid opening a-file for White rooks
+athena1_m15,omjbaV8R,15,b,r2q1rk1/pp1b1ppp/2np1b2/3Np3/1P2P3/5N1P/2P2PP1/R2Q1RK1 b - - 0 15,b7b5,d7e6;a7a6,Avoid giving up a-file and creating backward b-pawn
+athena2_m38,WXQrrUuA,38,w,8/5R2/6kp/8/P2P4/4r3/6P1/6K1 w - - 1 38,f7f8,f7f3;f7a7;g1f2,Avoid leaving rook passive after 37... Kg6
+athena2_m53_repetition,WXQrrUuA,53,w,8/3k4/7p/P4K1R/3P2P1/8/8/r7 w - - 15 53,f5e4,f5f6;f5g6;h5h6,Avoid 3-fold repetition draw when up +5.4 pawns
