@@ -32,6 +32,8 @@ A complete, formal theoretical reference for the search algorithms, pruning heur
    - [7.4 Piece Mobility via Magic Bitboards](#74-piece-mobility-via-magic-bitboards)
    - [7.5 King Safety, Pawn Shields & Open File Penalties](#75-king-safety-pawn-shields--open-file-penalties)
    - [7.6 Opening Queen Excursion Penalties](#76-opening-queen-excursion-penalties)
+   - [7.7 Rook Activity: Open Files & Seventh Rank Infiltration](#77-rook-activity-open-files--seventh-rank-infiltration)
+   - [7.8 Minor Piece Dynamics: Knight Outposts & Bishop Pair](#78-minor-piece-dynamics-knight-outposts--bishop-pair)
 
 ---
 
@@ -222,10 +224,13 @@ flowchart TD
     NMP -- No --> GenMoves
     GenMoves --> MoveLoop["Iterate Moves"]
     MoveLoop --> FP{"FP: depth==1 & staticEval + 150 <= alpha?"}
-    FP -- Yes (Quiet) --> SkipMove["Prune Move! Skip child search"]
-    FP -- No --> PVS["PVS: Move 0 Full Window / Move 1+ Zero-Window"]
+    FP -- Yes (Quiet) --> SkipMove1["Prune FP! Skip child search"]
+    FP -- No --> LMP{"LMP: depth<=3 & quietCount >= 3+3*d^2?"}
+    LMP -- Yes (Quiet) --> SkipMove2["Prune LMP! Skip child search"]
+    LMP -- No --> LogLMR["Logarithmic LMR: R = 0.75 + ln(d)*ln(m)/2.25"]
+    LogLMR --> PVS["PVS: Move 0 Full Window / Move 1+ Zero-Window"]
     PVS --> Cutoff{"Score >= Beta?"}
-    Cutoff -- Yes --> BetaCut["Beta Cutoff! Update Killers & TT"]
+    Cutoff -- Yes --> BetaCut["Beta Cutoff! Update Killers, History Bonus & Malus, & TT"]
     Cutoff -- No --> NextMove["Next Move"]
 ```
 
@@ -270,3 +275,12 @@ Mobility reflects the number of safe squares a piece attacks:
 
 ### 7.6 Opening Queen Excursion Penalties
 Premature queen sorties before minor piece development (Knights and Bishops) are penalized ($-25\text{ to } -50\text{ cp}$), preventing early queen blunders.
+
+### 7.7 Rook Activity: Open Files & Seventh Rank Infiltration
+- **Open Files**: Rooks on files devoid of any pawns control vital breakthrough corridors and receive $+25\text{ cp}$.
+- **Semi-Open Files**: Rooks on files devoid of friendly pawns exert direct pressure against opposing pawns and receive $+12\text{ cp}$.
+- **Seventh Rank Infiltration**: A rook occupying the 7th rank (rank 7 for White, rank 2 for Black) when the opponent's king is restricted to the back rank or enemy pawns occupy the 7th rank receives $+20\text{ cp}$.
+
+### 7.8 Minor Piece Dynamics: Knight Outposts & Bishop Pair
+- **Bishop Pair Advantage**: Retaining both light- and dark-squared bishops confers asymmetric tactical versatility and diagonal control, rewarded with $+30\text{ cp}$.
+- **Knight Outposts**: A knight established on advanced ranks (ranks 4, 5, or 6) that is solidly defended by a friendly pawn and permanently unassailable by opposing pawns on adjacent files receives $+25\text{ cp}$ (central files c, d, e, f) or $+15\text{ cp}$ (flank files).

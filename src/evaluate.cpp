@@ -336,6 +336,89 @@ int kingPawnShield(const BitBoard& board, Color kingSide,
     return static_cast<int>(
         (-shieldPenalty - uncastledKingPenalty - openFilePenalty - developmentPenalty) * weight);
 }
+
+int rookScore(const BitBoard& board, Color side) {
+    uint64_t rooks = side == WHITE ? board.getWhiteRooks() : board.getBlackRooks();
+    const uint64_t ownPawns = pawnsFor(board, side);
+    const uint64_t enemyPawns = pawnsFor(board, side == WHITE ? BLACK : WHITE);
+    const int enemyKingSquare = side == WHITE ? board.blackKingSquare : board.whiteKingSquare;
+    const int enemyKingRank = enemyKingSquare / 8;
+    int score = 0;
+
+    constexpr int OPEN_FILE_BONUS = 25;
+    constexpr int SEMI_OPEN_FILE_BONUS = 12;
+    constexpr int SEVENTH_RANK_BONUS = 20;
+
+    while (rooks) {
+        const int square = __builtin_ctzll(rooks);
+        rooks &= rooks - 1;
+
+        const int file = square & 7;
+        const int rank = square / 8;
+        const uint64_t fileMask = FILES[file];
+
+        if ((ownPawns & fileMask) == 0) {
+            if ((enemyPawns & fileMask) == 0) {
+                score += OPEN_FILE_BONUS;
+            } else {
+                score += SEMI_OPEN_FILE_BONUS;
+            }
+        }
+
+        // 7th rank infiltration bonus
+        const bool on7thRank = (side == WHITE && rank == 1) || (side == BLACK && rank == 6);
+        if (on7thRank) {
+            const int targetRank = side == WHITE ? 1 : 6;
+            const bool enemyKingOnBackRank = (side == WHITE && enemyKingRank == 0) || (side == BLACK && enemyKingRank == 7);
+            const bool enemyPawnsOn7th = (enemyPawns & (0xFFULL << (targetRank * 8))) != 0;
+            if (enemyKingOnBackRank || enemyPawnsOn7th) {
+                score += SEVENTH_RANK_BONUS;
+            }
+        }
+    }
+    return score;
+}
+
+int minorPieceScore(const BitBoard& board, Color side, const MaterialInfo& ownMaterial) {
+    int score = 0;
+
+    // Bishop pair bonus
+    if (ownMaterial.numBishops >= 2) {
+        score += 30;
+    }
+
+    // Knight outposts
+    uint64_t knights = side == WHITE ? board.getWhiteKnights() : board.getBlackKnights();
+    const uint64_t ownPawns = pawnsFor(board, side);
+    const uint64_t enemyPawns = pawnsFor(board, side == WHITE ? BLACK : WHITE);
+
+    while (knights) {
+        const int square = __builtin_ctzll(knights);
+        knights &= knights - 1;
+
+        const int rank = square / 8;
+        const int file = square & 7;
+
+        // Candidate outpost ranks (ranks 4, 5, 6 in chess notation)
+        const bool outpostRank = side == WHITE ? (rank >= 2 && rank <= 4) : (rank >= 3 && rank <= 5);
+        if (outpostRank) {
+            const bool defendedByPawn = (board.getPawnAttacks(square, static_cast<Color>(1 - side)) & ownPawns) != 0;
+            if (defendedByPawn) {
+                const uint64_t forwardFromEnemyPerspective = side == WHITE ? SPAN_SOUTH[square] : SPAN_NORTH[square];
+                const uint64_t adjacentEnemyPawnFiles =
+                    ((forwardFromEnemyPerspective & ~FILES[0]) >> 1) |
+                    ((forwardFromEnemyPerspective & ~FILES[7]) << 1);
+
+                if ((enemyPawns & adjacentEnemyPawnFiles) == 0) {
+                    const bool isCentral = file >= 2 && file <= 5;
+                    score += isCentral ? 25 : 15;
+                }
+            }
+        }
+    }
+
+    return score;
+}
 }
 
 namespace {
@@ -354,15 +437,22 @@ int evaluateScore(const BitBoard& board,
     const int whitePawn = pawnScore(board, WHITE, blackMaterial.endgameT);
     const int whiteKingSafety = kingPawnShield(
         board, WHITE, whiteMaterial, blackMaterial, blackPieceSquare);
+    const int whiteRook = rookScore(board, WHITE);
+    const int whiteMinor = minorPieceScore(board, WHITE, whiteMaterial);
+    const int whitePositional = whiteRook + whiteMinor;
+
     const int blackMopUp = mopUpScore(board, BLACK, blackMaterial, whiteMaterial);
     const int blackPawn = pawnScore(board, BLACK, whiteMaterial.endgameT);
     const int blackKingSafety = kingPawnShield(
         board, BLACK, blackMaterial, whiteMaterial, whitePieceSquare);
+    const int blackRook = rookScore(board, BLACK);
+    const int blackMinor = minorPieceScore(board, BLACK, blackMaterial);
+    const int blackPositional = blackRook + blackMinor;
 
     const int whiteScore = whiteMaterial.materialScore + whitePieceSquare +
-        whiteMopUp + whitePawn + whiteKingSafety;
+        whiteMopUp + whitePawn + whiteKingSafety + whitePositional;
     const int blackScore = blackMaterial.materialScore + blackPieceSquare +
-        blackMopUp + blackPawn + blackKingSafety;
+        blackMopUp + blackPawn + blackKingSafety + blackPositional;
     const int score = board.sideToMove == WHITE ? whiteScore - blackScore : blackScore - whiteScore;
 
     if constexpr (CaptureBreakdown) {
@@ -371,11 +461,13 @@ int evaluateScore(const BitBoard& board,
         breakdown->whiteMopUp = whiteMopUp;
         breakdown->whitePawn = whitePawn;
         breakdown->whiteKingSafety = whiteKingSafety;
+        breakdown->whitePositional = whitePositional;
         breakdown->blackMaterial = blackMaterial.materialScore;
         breakdown->blackPieceSquare = blackPieceSquare;
         breakdown->blackMopUp = blackMopUp;
         breakdown->blackPawn = blackPawn;
         breakdown->blackKingSafety = blackKingSafety;
+        breakdown->blackPositional = blackPositional;
         breakdown->score = score;
     }
     return score;

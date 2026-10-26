@@ -298,11 +298,13 @@ void uciLoop() {
                    << " pawn=" << breakdown.whitePawn
                    << " shield=" << breakdown.whiteKingSafety
                    << " mopup=" << breakdown.whiteMopUp
+                   << " positional=" << breakdown.whitePositional
                    << " black material=" << breakdown.blackMaterial
                    << " pst=" << breakdown.blackPieceSquare
                    << " pawn=" << breakdown.blackPawn
                    << " shield=" << breakdown.blackKingSafety
-                   << " mopup=" << breakdown.blackMopUp;
+                   << " mopup=" << breakdown.blackMopUp
+                   << " positional=" << breakdown.blackPositional;
             printUciLine(result.str());
         }
         else if (token == "hash") {

@@ -13,11 +13,13 @@ class Evaluation {
         int whiteMopUp = 0;
         int whitePawn = 0;
         int whiteKingSafety = 0;
+        int whitePositional = 0;
         int blackMaterial = 0;
         int blackPieceSquare = 0;
         int blackMopUp = 0;
         int blackPawn = 0;
         int blackKingSafety = 0;
+        int blackPositional = 0;
         int score = 0;
     };
 
