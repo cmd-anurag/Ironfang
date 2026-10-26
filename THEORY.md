@@ -12,6 +12,7 @@ A complete, formal theoretical reference for the search algorithms, pruning heur
 2. [State Representation & Transposition Table](#2-state-representation--transposition-table)
    - [2.1 Zobrist Hashing](#21-zobrist-hashing)
    - [2.2 Transposition Table Architecture & Replacement Policy](#22-transposition-table-architecture--replacement-policy)
+   - [2.3 Graph History Interaction (GHI) & TT Repetition Blindness Bypass](#23-graph-history-interaction-ghi--tt-repetition-blindness-bypass)
 3. [Search Control & Window Narrowing](#3-search-control--window-narrowing)
    - [3.1 Iterative Deepening](#31-iterative-deepening)
    - [3.2 Aspiration Windows](#32-aspiration-windows)
@@ -112,6 +113,38 @@ struct TTEntry {
 - **Replacement Policy**: Combines search depth with generation age:
   $$\text{score}_{\text{old}} = \text{entry.depth} - (\text{currentAge} - \text{entry.age}), \quad \text{score}_{\text{new}} = \text{depth}$$
   The new result overwrites the slot if $\text{score}_{\text{new}} \ge \text{score}_{\text{old}}$.
+
+### 2.3 Graph History Interaction (GHI) & TT Repetition Blindness Bypass
+In computer chess, the search space is not a pure tree but a **Directed Acyclic Graph (DAG)** where multiple distinct paths lead to identical board configurations. While Zobrist keys uniquely identify the board state, they do **not** encode the path history that led to the node.
+
+#### The GHI Repetition Failure Mode
+1. Suppose at Move $51$, Position $P$ is evaluated as winning ($+3.5\text{ pawns}$) along a tree path where $P$ had never occurred before. The TT caches `eval = +350` at depth $d$.
+2. At Move $53$, Position $P$ has already occurred twice in the real game.
+3. When search considers entering $P$ at $\text{ply} = 1$, standard TT probing finds a key match with sufficient depth and triggers an **instant cutoff**, returning $+350\text{ cp}$.
+4. Because the cutoff terminates search at $\text{ply} = 1$, the engine never expands $\text{ply} = 2$, where the opponent has a forced checking move that completes a **3-fold repetition draw** ($0.0\text{ cp}$).
+5. The engine plays the move, assuming it retains $+3.5\text{ pawns}$, and walks directly into a draw.
+
+#### The Resolution (`hasAppearedInGameHistory`)
+To preserve TT speed while guaranteeing soundness:
+$$\text{AllowTTCutoff}(s, \text{ply}) = \neg \text{hasAppearedInGameHistory}(s, \text{ply})$$
+Where `hasAppearedInGameHistory` scans `board.repetitionPath` within the reversible $50$-move window ($t_{\text{current}} - \text{halfmoveClock} \le t \le t_{\text{current}} - 2$):
+```cpp
+bool hasAppearedInGameHistory(const BitBoard& board, int ply) {
+    if (board.halfmoveClock < 2 || board.pathDepth <= 1) return false;
+    const int currentIndex = board.pathDepth - 1;
+    const int earliestRelevantIndex = std::max(0, currentIndex - board.halfmoveClock);
+    for (int index = currentIndex - 2; index >= earliestRelevantIndex; index -= 2) {
+        if (board.repetitionPath[index] == board.zobristKey) {
+            if (currentIndex - index > ply) return true; // Occurred in actual game history
+        }
+    }
+    return false;
+}
+```
+If `hasAppearedInGameHistory` returns true:
+- The TT cutoff is **bypassed**.
+- `ttMove` is **retained** as the highest-priority move ordering hint.
+- Child moves are expanded normally, allowing `isRepetitionDraw()` to evaluate repeating branches at $0\text{ cp}$ (or $-10\text{ cp}$), forcing the root to select winning non-repeating alternatives.
 
 ---
 

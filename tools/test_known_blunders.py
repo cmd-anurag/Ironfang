@@ -12,7 +12,7 @@ import pathlib
 import subprocess
 import sys
 
-def query_engine(engine_path, fen, movetime=1000):
+def query_engine(engine_path, fen, moves="", movetime=1000):
     p = subprocess.Popen(
         [str(engine_path)],
         stdin=subprocess.PIPE,
@@ -23,7 +23,10 @@ def query_engine(engine_path, fen, movetime=1000):
     )
     p.stdin.write("uci\n")
     p.stdin.write("isready\n")
-    p.stdin.write(f"position fen {fen}\n")
+    if moves:
+        p.stdin.write(f"position startpos moves {moves}\n")
+    else:
+        p.stdin.write(f"position fen {fen}\n")
     p.stdin.write(f"go movetime {movetime}\n")
     p.stdin.flush()
     
@@ -85,7 +88,8 @@ def main():
         good_moves = [m.strip() for m in pos["good_moves"].split(";")]
         desc = pos["description"]
 
-        bestmove, depth, score, pv = query_engine(engine_path, fen, args.movetime)
+        moves = pos.get("moves", "").strip()
+        bestmove, depth, score, pv = query_engine(engine_path, fen, moves, args.movetime)
 
         if bestmove == blunder:
             status = "BLUNDER REPEATED [FAIL]"

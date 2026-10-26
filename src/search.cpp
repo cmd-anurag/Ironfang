@@ -675,6 +675,25 @@ bool isRepetitionDraw(const BitBoard& board, int ply) {
     return false;
 }
 
+// Graph History Interaction (GHI) / TT Repetition Blindness Detection:
+// Checks whether the current position has occurred in the actual game history prior
+// to the search root. If so, taking a TT cutoff here is unsound because the TT entry
+// was evaluated in a tree without the current game history and may hide a repetition draw.
+bool hasAppearedInGameHistory(const BitBoard& board, int ply) {
+    if (board.halfmoveClock < 2 || board.pathDepth <= 1) return false;
+
+    const int currentIndex = board.pathDepth - 1;
+    const int earliestRelevantIndex = std::max(0, currentIndex - board.halfmoveClock);
+    for (int index = currentIndex - 2; index >= earliestRelevantIndex; index -= 2) {
+        if (board.repetitionPath[index] == board.zobristKey) {
+            if (currentIndex - index > ply) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 
 void orderMoves(BitBoard& board, SearchMove* moves, int* scores, int moveCount, uint16_t hashMove,
                 const MoveGenerationAttackData& attacks, bool inQuiescence, int ply) {
@@ -1118,7 +1137,15 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     int ttScore;
     if (TT.probe(transpositionKey(board), depth, alpha, beta, ply, ttScore, ttMove)) {
         if (ply > 0) {
-            return ttScore;
+            // Graph History Interaction (GHI) / TT Repetition Blindness Bypass:
+            // If this position has occurred in actual game history prior to the root,
+            // taking a TT cutoff is unsafe because the stored subtree might hide a
+            // 3-fold repetition draw that Black could force. Bypassing the cutoff
+            // preserves ttMove as an ordering hint while forcing search to explore
+            // the subtree and detect repetitions via isRepetitionDraw().
+            if (!hasAppearedInGameHistory(board, ply)) {
+                return ttScore;
+            }
         }
     }
 

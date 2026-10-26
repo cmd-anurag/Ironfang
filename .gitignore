@@ -10,6 +10,7 @@ chess
 perf.data
 # Generated benchmark output; keep it out of the repository.
 /bench-results*.csv
+/bench-v*.csv
 /bench/results/
 __pycache__/
 tools/reference-parity/bin/
