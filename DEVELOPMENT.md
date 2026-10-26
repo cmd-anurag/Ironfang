@@ -181,16 +181,33 @@ Evaluated across all 250 curated puzzles (`python tools/solve_puzzles.py --times
 - **Tier 250ms**: **233 / 250 (93.2%) [All-Time Record]** | Avg Depth: **d11.8**
   - Master / GM category reached **39 / 50 (78%)**!
 
-#### Head-to-Head Match Play: Ironfang v30 vs. Ironfang v29
-Executed at standard `10+0.1` blitz time control:
-- **Ironfang v30 vs. Ironfang v29**: **4.0 – 2.0 (+2 =4 -0, 66.7%)** $\implies$ **+120.4 Elo over v29 (LOS: 92.1%)**.
-- Undefeated in all 6 games, scoring both wins with Black via checkmate.
+#### Standard Regression Testing Match Play (Ironfang v30)
+Executed at standard `10+0.1` blitz time control under the engine testing protocol:
+- **vs. Previous Version (Ironfang v29, 10 Games)**:
+  - **Score**: **9.0 – 1.0 (+8 =2 -0, 90.0%)** $\implies$ **+381.7 Elo over v29 (LOS: 99.8%)**.
+  - Undefeated in all 10 games (8 wins, 2 draws).
+- **vs. Reference Engine (Chess-Coding-Adventure, 6 Games)**:
+  - **Score**: **5.0 – 1.0 (+4 =2 -0, 83.3%)** $\implies$ **+279.6 Elo over Reference (LOS: 97.7%)**.
+  - Undefeated in all 6 games (4 wins, 2 draws).
+- **Combined Regression Record**: **12 Wins, 0 Losses, 4 Draws (87.5%)**.
+
+#### Athena-ChessBot Game (`omjbaV8R`) Diagnostic Probe
+Evaluated at Move 14 after 14. b4 (where Ironfang in the real game played `14... cxb4?!`, creating backward pawns and opening the $a$-file for White's rooks):
+- **v28**: `bestmove c5b4` (-10 cp, depth 9, 3.0M nodes)
+- **v29**: `bestmove c5b4` (-18 cp, depth 12, 2.7M nodes)
+- **v30**: **`bestmove b7b6`** (-27 cp, **depth 14**, 2.2M nodes) $\implies$ **Rejects `cxb4`**, solidifies the pawn chain, keeps the $a$-file closed, and denies White any rook penetration!
 
 ---
 
 ## 4. Development Standards & Tooling
 
-### 4.1 Binary Compilation & Release Archive
+### 4.1 Standard Regression Protocol
+Every newly compiled milestone must complete the three-tier regression harness before deployment:
+1. **Previous Version Match**: 10 games against `v<N-1>` at `10+0.1` via Cutechess CLI.
+2. **Reference Engine Match**: 6 games against Reference Engine at `10+0.1` via Cutechess CLI.
+3. **Tactical Puzzle Suite**: 250 curated puzzles evaluated at `25ms`, `100ms`, and `250ms` via `tools/solve_puzzles.py`.
+
+### 4.2 Binary Compilation & Release Archive
 Compile using CMake and Ninja on Windows x64:
 ```powershell
 cmake -S . -B build-windows -G Ninja -DCMAKE_BUILD_TYPE=Release
