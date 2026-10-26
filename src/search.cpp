@@ -6,6 +6,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
@@ -31,6 +32,18 @@ namespace {
 // -----------------------------------------------------------------------------
 // Search configuration and internal move representation
 // -----------------------------------------------------------------------------
+auto initLmrTable = []() {
+    std::array<std::array<int, 64>, 64> table{};
+    for (int d = 1; d < 64; ++d) {
+        for (int m = 1; m < 64; ++m) {
+            table[d][m] = static_cast<int>(0.75 + std::log(d) * std::log(m) / 2.25);
+        }
+    }
+    return table;
+};
+
+const std::array<std::array<int, 64>, 64> lmrTable = initLmrTable();
+
 constexpr int HASH_MOVE_SCORE = 100000000;
 constexpr int WINNING_CAPTURE_BIAS = 8000000;
 constexpr int LOSING_CAPTURE_BIAS = 2000000;
@@ -805,16 +818,17 @@ static int scoreForTranspositionTable(int score, int ply) {
 }
 
 int Search::searchChild(BitBoard& board, int childDepth, int alpha, int beta,
-                        int ply, int numExtensions, bool reduceMove, int moveIndex) {
+                        int ply, int numExtensions, int reduction, int moveIndex) {
     if (moveIndex == 0) {
         return -minimaxAlphaBeta(board, childDepth, -beta, -alpha,
                                  ply, numExtensions);
     }
 
     int score;
-    if (reduceMove) {
+    if (reduction > 0) {
         ++lateMoveReductionCount;
-        score = -minimaxAlphaBeta(board, childDepth - 1, -alpha - 1, -alpha,
+        const int reducedDepth = std::max(1, childDepth - reduction);
+        score = -minimaxAlphaBeta(board, reducedDepth, -alpha - 1, -alpha,
                                   ply, numExtensions);
         if (searchStoppedByTime || score <= alpha) return score;
 
@@ -1221,12 +1235,37 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
             }
         }
 
-        const bool reduceMove = extension == 0 && depth >= 3 &&
-            moveIndex >= 3 && !isCapture;
+        int reduction = 0;
+        if (extension == 0 && depth >= 3 && moveIndex >= 3 && !isCapture && !isPromotion && !inCheck) {
+            const int d = std::min(depth, 63);
+            const int m = std::min(moveIndex, 63);
+            reduction = lmrTable[d][m];
+
+            if (givesCheck && reduction > 0) {
+                --reduction;
+            }
+
+            if (ply < MAX_KILLER_PLY &&
+                (moves[moveIndex].value == killerMoves[ply][0] ||
+                 moves[moveIndex].value == killerMoves[ply][1])) {
+                reduction = std::max(0, reduction - 1);
+            }
+
+            const size_t sideIdx = static_cast<size_t>(previousState.sideToMove);
+            const int hist = historyHeuristics[sideIdx][from][to];
+            if (hist > 10000 && reduction > 0) {
+                --reduction;
+            } else if (hist < -10000) {
+                ++reduction;
+            }
+
+            const int childDepth = depth - 1 + extension;
+            reduction = std::clamp(reduction, 0, childDepth - 1);
+        }
 
         const int score = searchChild(
             board, depth - 1 + extension, alpha, beta, ply + 1,
-            numExtensions + extension, reduceMove, moveIndex);
+            numExtensions + extension, reduction, moveIndex);
         board.unmakeSearchMove(moves[moveIndex].value, previousState, capturedPiece);
 
         if (searchStoppedByTime || (ply == 0 && checkSearchDeadline(true))) {

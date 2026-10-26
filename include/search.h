@@ -21,7 +21,7 @@ private:
     static int minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, int ply,
                                 int numExtensions = 0, bool allowNull = true);
     static int searchChild(BitBoard& board, int childDepth, int alpha, int beta,
-                           int ply, int numExtensions, bool reduceMove, int moveIndex = 0);
+                           int ply, int numExtensions, int reduction, int moveIndex = 0);
     static int quiescenceSearch(BitBoard& board, int alpha, int beta, int ply = 0);
 };
 

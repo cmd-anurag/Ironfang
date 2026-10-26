@@ -181,10 +181,24 @@ Due to move ordering, Move 0 is the best move $>85\%$ of the time. PVS leverages
 - **Re-Search**: If and only if a scout search beats $\alpha$ ($\text{score} > \alpha$), our assumption was incorrect. The move is re-searched with the full window $[-\beta, -\alpha]$ to determine its exact evaluation.
 
 ### 5.2 Late Move Reductions (LMR)
-Quiet moves ordered late in the list (`moveIndex >= 3` at `depth >= 3`) that are not tactical checks, promotions, or killer moves have a low probability of being the optimal move.
-- Ironfang reduces their depth by 1 ply:
-  $$\text{childDepth}_{\text{reduced}} = \text{childDepth} - 1$$
-- If the reduced search produces a score exceeding $\alpha$, the engine performs a full-depth re-search.
+Quiet moves ordered late in the list (`moveIndex >= 3` at `depth >= 3`) that are not tactical checks, promotions, or killer moves have an exponentially decreasing probability of being the optimal move.
+
+Instead of flat single-ply reductions, Ironfang employs a **Logarithmic Multi-Ply Reduction Table**:
+$$R_{\text{base}}(d, m) = \left\lfloor 0.75 + \frac{\ln(d) \times \ln(m)}{2.25} \right\rfloor$$
+
+#### Contextual Dynamic Adjustments
+The base reduction $R$ is dynamically modulated by move characteristics:
+1. **Giving Check**: If the quiet move delivers check, reduce less: $R \leftarrow \max(0, R - 1)$.
+2. **Killer Move**: If the move is stored in the killer table for this ply, reduce less: $R \leftarrow \max(0, R - 1)$.
+3. **History Heuristic Modulator**:
+   - High History ($\text{history} > +10,000$): Move has demonstrated prior tactical merit $\implies R \leftarrow \max(0, R - 1)$.
+   - Low / Negative History ($\text{history} < -10,000$): Move has repeatedly failed $\implies R \leftarrow R + 1$.
+4. **Depth Floor Guard**: $R$ is clamped to $[0, \text{childDepth} - 1]$ ensuring the reduced child search executes at $\text{depth} \ge 1$.
+
+#### Two-Tiered Re-Search Protocol
+1. **Scout Search**: The move is searched at $\text{reducedDepth} = \text{childDepth} - R$ with zero-window $[-\alpha - 1, -\alpha]$.
+2. **First Re-Search**: If $\text{score} > \alpha$, the reduction was overly optimistic. The move is re-searched at full $\text{childDepth}$ with zero-window $[-\alpha - 1, -\alpha]$.
+3. **PVS Re-Search**: If the full-depth zero-window search still beats $\alpha$, it is re-searched with the full alpha-beta window $[-\beta, -\alpha]$.
 
 ---
 
