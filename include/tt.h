@@ -42,6 +42,19 @@ class TranspositionTable {
             bool allowCutoff = true
         );
 
+        bool probe(
+            uint64_t zobristKey,
+            int depth,
+            int alpha,
+            int beta,
+            int ply,
+            int &outEval,
+            uint16_t &outMove,
+            int &outDepth,
+            TT_FLAG &outFlag,
+            bool allowCutoff = true
+        );
+
         void store(
             uint64_t zobristKey,
             int depth,

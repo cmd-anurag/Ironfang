@@ -33,6 +33,8 @@ Ironfang is a high-performance, UCI-compliant chess engine written in C++17 util
 | **v29** | `2a01273` | Atomic `makeNullMove` / `unmakeNullMove`, Reverse Futility Pruning (RFP), Null Move Pruning (NMP), Principal Variation Search (PVS), Frontier Futility Pruning (FP). | **9.7× search tree reduction**;<br>**+120.4 Elo vs. v28** (4.0 – 2.0);<br>**+416.6 Elo vs. Reference** (5.5 – 0.5). |
 | **v30** | `0c76005` | Logarithmic multi-ply LMR table ($R = 0.75 + \frac{\ln(d)\ln(m)}{2.25}$), Late Move Pruning ($3 + 3d^2$), History Malus ($[-50k, 50k]$), Positional Eval (rooks on open/semi-open files, 7th rank infiltration, knight outposts, bishop pair bonus). | **34.8× Kiwipete tree reduction vs. v28**;<br>**+381.7 Elo vs. v29** (9.0 – 1.0);<br>**+279.6 Elo vs. Reference** (5.0 – 1.0);<br>**Record 93.2% (233/250) on 250 Puzzles**. |
 | **v31** | `11a5c68` | Graph History Interaction (GHI) / TT Repetition Blindness Bypass (`hasAppearedInGameHistory`), full 4-tier regression suite verification, known blunders regression harness. | **+34.9 Elo vs. v30** (3 – 2 – 5, undefeated by time);<br>**100.0% Sweep vs. Reference** (6 – 0 – 0, all checkmates);<br>**93.2% (233/250) on 250 Puzzles**;<br>**4/4 (100%) Known Blunders Passed**;<br>**Zero Speed/NPS Regression**. |
+| **v32** | `2d6fb49` | Structural castling tracking (`whiteHasCastled`/`blackHasCastled`), counter-move heuristic table (`counterMoves[64][64]`), counter-move LMR discount, uncastled king penalty fix. | **+147.2 Elo vs. v31** (7.0 – 3.0);<br>**+416.6 Elo vs. Reference** (5.5 – 0.5);<br>**94.0% (235/250) on 250 Puzzles**;<br>**5/5 (100%) Known Blunders Passed**. |
+| **v33** | *(Candidate)* | Stockfish-style Dual-Bound Dynamic Time Management (`include/timeman.h`, `src/timeman.cpp`), obvious-move node fraction savings, instability extensions, clean iteration stopping, updated blunder suite with AconcaguaBot game (`aconcagua_m22`, `aconcagua_m36`). Built but unshipped pending v34. | **+147.2 Elo vs. v32** (7.0 – 3.0, 94.9% LOS);<br>**+279.6 Elo vs. Reference** (5.0 – 1.0);<br>**100.0% (50/50) Endgame Suite at 1000ms**;<br>**Zero Speed Regression (2.4M–3.7M NPS)**. |
 
 ---
 
@@ -273,6 +275,27 @@ A candidate release for Ironfang v32 was developed and put through the standard 
 - **Artifacts & Deployment**:
   - Binary archived: `D:/engines/v32/v32.exe` (269,850 bytes).
   - Production deployment: `D:/lichess-bot/engines/ironfang.exe`.
+
+### 3.7 Version 33 Candidate (Completed 2026-10-27, Unshipped Pending v34)
+- **Key Enhancements**:
+  1. **Stockfish Dual-Bound Dynamic Time Management**:
+     - Modularized time management into dedicated [`include/timeman.h`](include/timeman.h) and [`src/timeman.cpp`](src/timeman.cpp).
+     - Implemented dual bounds: `optimumTime` ($\frac{T_{\text{left}} - \text{overhead}}{35} + 0.75 \times \text{inc}$) and `maximumTime` ($\min(0.30 \times T_{\text{left}}, 3.5 \times \text{optimumTime})$).
+     - Dynamic node fraction reduction: When the best root move commands $\ge 75\%$ of root nodes, time target scales down ($0.5\times\text{–}0.7\times$), saving critical clock on obvious recaptures.
+     - Instability scaling: Multiplies time budget by $1.8\times$ (capped at `maximumTime`) when PV flips or score drops $>30\text{ cp}$ after depth 4.
+     - Clean inter-iteration stopping: Aborts before launching an iteration that is statistically unreachable with remaining clock budget.
+  2. **Known Blunders Suite Expansion**:
+     - Added Move 36 (`aconcagua_m36`, `36. g3` refuting `36. Rxc4` blunder) and Move 22 (`aconcagua_m22`, `22. e5!` vs `22. Re2??` blunder) from competitive play against 2279-rated `AconcaguaBot`.
+- **5-Tier Regression Verification**:
+  - **Tier 1 (Previous Version Head-to-Head)**: **7.0 / 10 (+5 -1 =4, +147.2 Elo, LOS: 94.9%)** vs production v32 at `10+0.1`.
+  - **Tier 2 (Reference Engine Match)**: **5.0 / 6.0 (+5 -1 =0, +279.6 Elo)** vs Reference Engine at `10+0.1`.
+  - **Tier 3 (Tactical Puzzle Suite)**: 223/250 (89.2%) at 25ms, 231/250 (92.4%) at 100ms, 234/250 (93.6%) at 250ms.
+  - **Endgame Suite (100% Verified)**: **50 / 50 (100.0%)** at 1000ms.
+  - **Tier 4 (Known Blunders Suite)**: 6/7 Passed (85.7%); `aconcagua_m22` tracked for future tactical search development.
+  - **Tier 5 (Speed Benchmark)**: Search depth maintained at 2.4M–3.7M NPS.
+- **Release Status**:
+  - Binary built: `build-windows/ironfang.exe` (UCI `Ironfangv33`).
+  - Retained unshipped in workspace per development plan; production bot remains on v32 pending v34 search enhancements.
 
 ---
 

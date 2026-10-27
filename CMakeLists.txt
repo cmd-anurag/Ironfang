@@ -43,6 +43,7 @@ set(SOURCES
     src/precomputedEvalTables.cpp
     src/precomputedMagics.cpp
     src/search.cpp
+    src/timeman.cpp
     src/tt.cpp
     src/uci.cpp
     src/zobrist.cpp

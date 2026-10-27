@@ -17,8 +17,19 @@ TranspositionTable::TranspositionTable()
 bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int beta,
                                int ply, int &outEval, uint16_t &outMove, bool allowCutoff)
 {
+    int ignoredDepth = 0;
+    TT_FLAG ignoredFlag = TT_UPPER;
+    return probe(zobristKey, depth, alpha, beta, ply, outEval, outMove, ignoredDepth, ignoredFlag, allowCutoff);
+}
+
+bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int beta,
+                               int ply, int &outEval, uint16_t &outMove,
+                               int &outDepth, TT_FLAG &outFlag, bool allowCutoff)
+{
     ++lookupCount;
     outMove = 0;
+    outDepth = 0;
+    outFlag = TT_UPPER;
 
     size_t index = static_cast<size_t>(zobristKey & TT_MASK);
     TTEntry &entry = table[index];
@@ -26,18 +37,21 @@ bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int be
     if (entry.key == zobristKey) {
         ++keyMatchCount;
         outMove = entry.packedMove;
+        outDepth = entry.depth;
+        outFlag = storedFlag(entry);
+
+        // Mate scores are normalized when stored so their distance is
+        // independent of the path that first reached this position.
+        // Restore the current path's score before comparing alpha/beta.
+        int eval = entry.eval;
+        constexpr int mateThreshold = 99000;
+        if (eval > mateThreshold) eval -= ply;
+        else if (eval < -mateThreshold) eval += ply;
+        outEval = eval;
 
         // Check if stored depth is enough
         if (allowCutoff && entry.depth >= depth) {
-            // Mate scores are normalized when stored so their distance is
-            // independent of the path that first reached this position.
-            // Restore the current path's score before comparing alpha/beta.
-            int eval = entry.eval;
-            constexpr int mateThreshold = 99000;
-            if (eval > mateThreshold) eval -= ply;
-            else if (eval < -mateThreshold) eval += ply;
-
-            switch(storedFlag(entry)) {
+            switch(outFlag) {
                 case TT_EXACT:
                     // The reference uses -1 as both a valid evaluation and
                     // LookupFailed. Searcher treats an exact -1 result as a
@@ -45,13 +59,11 @@ bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int be
                     // behavior for decision parity.
                     if (eval == -1) return false;
                     ++hitCount;
-                    outEval = eval;
                     return true;
                 case TT_LOWER:
                     if (eval >= beta) {
                         if (eval == -1) return false;
                         ++hitCount;
-                        outEval = eval;
                         return true;
                     }
                     break;
@@ -59,7 +71,6 @@ bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int be
                     if (eval <= alpha) {
                         if (eval == -1) return false;
                         ++hitCount;
-                        outEval = eval;
                         return true;
                     }
                     break;

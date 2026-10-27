@@ -148,6 +148,13 @@ int iterationBestScore = -INF;
 bool hasSearchedAtLeastOneRootMove = false;
 uint16_t previousRootBestMove = 0;
 
+struct RootMoveStats {
+    uint16_t move = 0;
+    uint64_t nodes = 0;
+};
+std::array<RootMoveStats, MAX_SEARCH_MOVES> rootMoveStats{};
+int rootMovesCount = 0;
+
 // Search counters used by UCI metrics.
 uint64_t lateMoveReductionCount = 0;
 uint64_t lateMoveResearchCount = 0;
@@ -889,7 +896,15 @@ int Search::searchChild(BitBoard& board, int childDepth, int alpha, int beta,
 // -----------------------------------------------------------------------------
 // Iterative-deepening driver and UCI reporting
 // -----------------------------------------------------------------------------
-Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
+Move Search::findBestMove(BitBoard& board, int depth, int timeLimit) {
+    TimeManager tm;
+    if (timeLimit >= 0) {
+        tm.initFixedTime(timeLimit);
+    }
+    return findBestMove(board, depth, tm);
+}
+
+Move Search::findBestMove(BitBoard& board, int maxDepth, const TimeManager& tm) {
     maxDepth = std::max(1, std::min(maxDepth, MAX_DEPTH));
     TT.incrementAge();
     // Reset counters
@@ -950,7 +965,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
     };
     
     // Search to the requested limit; periodic node checks bound stop latency.
-    const int hardTimeLimit = timeLimit;
+    const int hardTimeLimit = tm.getMaximumTime();
     hasHardSearchDeadline = hardTimeLimit >= 0;
     if (hasHardSearchDeadline) {
         hardSearchDeadline = startTime + std::chrono::milliseconds(hardTimeLimit);
@@ -996,11 +1011,14 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
 
     // A zero clock budget is distinct from an absent time limit (-1). Keep
     // the legal fallback move instead of treating go wtime 0 as infinite.
-    if (timeLimit == 0) {
+    if (hardTimeLimit == 0) {
         emitSearchStats();
         return decodeSearchMove(board, SearchMove(bestPackedMove));
     }
     
+    int previousDepthScore = -INF;
+    uint16_t previousDepthBestMove = 0;
+
     for (int depth = 1; depth <= maxDepth; depth++) {
         selectiveDepth = 0;
 
@@ -1099,6 +1117,34 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
         // line. Stop now so the remaining clock is available for later moves.
         if (std::abs(bestScore) > MATE_THRESHOLD &&
             MATE_SCORE - std::abs(bestScore) <= depth) break;
+
+        // Dynamic time management for clock games:
+        if (tm.isClockGame()) {
+            if (rootMoveOutput.count == 1) break;
+
+            uint64_t bestMoveNodes = 0;
+            uint64_t totalRootNodes = 0;
+            for (int i = 0; i < rootMovesCount; ++i) {
+                totalRootNodes += rootMoveStats[i].nodes;
+                if (rootMoveStats[i].move == bestPackedMove) {
+                    bestMoveNodes = rootMoveStats[i].nodes;
+                }
+            }
+            const double bestMoveNodeFraction = totalRootNodes > 0
+                ? static_cast<double>(bestMoveNodes) / totalRootNodes
+                : 0.0;
+
+            const bool isUnstable = (depth >= 4) &&
+                ((previousDepthBestMove != 0 && bestPackedMove != previousDepthBestMove) ||
+                 (previousDepthScore != -INF && bestScore < previousDepthScore - 30));
+
+            if (tm.shouldStopBeforeNextIteration(depth, elapsedMs, bestMoveNodeFraction, isUnstable)) {
+                break;
+            }
+        }
+
+        previousDepthBestMove = bestPackedMove;
+        previousDepthScore = bestScore;
     }
 
     emitSearchStats();
@@ -1109,7 +1155,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, int timeLimit) {
 // Alpha-beta search
 // -----------------------------------------------------------------------------
 int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, int ply,
-                             int numExtensions, bool allowNull) {
+                             int numExtensions, bool allowNull, uint16_t excludedMove) {
     ++nodeCount; // an efficiency metric
     selectiveDepth = std::max(selectiveDepth, ply);
     if (ply < MAX_PLY) {
@@ -1154,9 +1200,12 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
 
     const int originalAlpha = alpha;
     uint16_t ttMove = 0;
-    int ttScore;
-    if (TT.probe(transpositionKey(board), depth, alpha, beta, ply, ttScore, ttMove)) {
-        if (ply > 0) {
+    int ttScore = 0;
+    int ttDepth = 0;
+    TT_FLAG ttFlag = TT_UPPER;
+    if (TT.probe(transpositionKey(board), depth, alpha, beta, ply,
+                 ttScore, ttMove, ttDepth, ttFlag, excludedMove == 0)) {
+        if (ply > 0 && excludedMove == 0) {
             // Graph History Interaction (GHI) / TT Repetition Blindness Bypass:
             // If this position has occurred in actual game history prior to the root,
             // taking a TT cutoff is unsafe because the stored subtree might hide a
@@ -1185,7 +1234,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     }
 
     // Null Move Pruning (NMP)
-    if (allowNull && depth >= 3 && ply > 0 && !inCheck && beta < MATE_THRESHOLD && staticEval >= beta) {
+    if (allowNull && excludedMove == 0 && depth >= 3 && ply > 0 && !inCheck && beta < MATE_THRESHOLD && staticEval >= beta) {
         const bool hasNonPawns = board.sideToMove == WHITE
             ? (board.getWhitePieces() ^ board.getWhitePawns() ^ (1ULL << board.whiteKingSquare)) != 0
             : (board.getBlackPieces() ^ board.getBlackPawns() ^ (1ULL << board.blackKingSquare)) != 0;
@@ -1229,8 +1278,16 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     int quietMovesCount = 0;
     std::array<SearchMove, 64> quietMovesTried{};
     int quietMovesTriedCount = 0;
+    int movesSearched = 0;
 
     for (int moveIndex = 0; moveIndex < moveCount; ++moveIndex) {
+        if (moves[moveIndex].value == excludedMove) continue;
+        ++movesSearched;
+
+        if (ply == 0 && moveIndex == 0) {
+            rootMovesCount = moveCount;
+        }
+        const uint64_t nodesBefore = (ply == 0) ? nodeCount : 0;
         if (ply < MAX_PLY) searchPathMoves[ply] = moves[moveIndex].value;
         const Gamestate previousState = saveGameState(board);
         const int from = searchMoveFrom(moves[moveIndex]);
@@ -1254,7 +1311,9 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
             const int targetRank = to / 8;
             const bool advancedPawn = (movingPiece & 7) == 1 &&
                 (targetRank == 1 || targetRank == 6);
-            if (givesCheck || advancedPawn) extension = 1;
+            if (givesCheck || advancedPawn) {
+                extension = 1;
+            }
         }
 
         // Futility Pruning at frontier nodes (depth 1)
@@ -1325,6 +1384,11 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
             numExtensions + extension, reduction, moveIndex);
         board.unmakeSearchMove(moves[moveIndex].value, previousState, capturedPiece);
 
+        if (ply == 0 && moveIndex < MAX_SEARCH_MOVES) {
+            rootMoveStats[moveIndex].move = moves[moveIndex].value;
+            rootMoveStats[moveIndex].nodes = nodeCount - nodesBefore;
+        }
+
         if (searchStoppedByTime || (ply == 0 && checkSearchDeadline(true))) {
             return 0;
         }
@@ -1373,9 +1437,11 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
                     prevHist = std::max(-MAX_HISTORY, prevHist - bonus);
                 }
             }
-            TT.store(transpositionKey(board), depth,
-                     scoreForTranspositionTable(beta, ply), TT_LOWER,
-                     moves[moveIndex].value);
+            if (excludedMove == 0) {
+                TT.store(transpositionKey(board), depth,
+                         scoreForTranspositionTable(beta, ply), TT_LOWER,
+                         moves[moveIndex].value);
+            }
 
             return beta;
         }
@@ -1392,6 +1458,10 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         }
     }
 
+    if (movesSearched == 0 && excludedMove != 0) {
+        return alpha;
+    }
+
     TT_FLAG flag;
     if(alpha <= originalAlpha) {
         flag = TT_UPPER;
@@ -1400,8 +1470,10 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         flag = TT_EXACT;
     }
 
-    TT.store(transpositionKey(board), depth,
-             scoreForTranspositionTable(alpha, ply), flag, bestPackedMove);
+    if (excludedMove == 0) {
+        TT.store(transpositionKey(board), depth,
+                 scoreForTranspositionTable(alpha, ply), flag, bestPackedMove);
+    }
     return alpha;
 }
 

@@ -9,6 +9,7 @@
 #include <thread>
 #include "bitboard.h"
 #include "search.h"
+#include "timeman.h"
 #include "opening_book.h"
 #include "evaluate.h"
 
@@ -78,7 +79,7 @@ void uciLoop() {
         iss >> token;
 
         if(token == "uci") {
-            printUciLine("id name Ironfangv32");
+            printUciLine("id name Ironfangv33");
             printUciLine("id author dark");
             printUciLine("option name UseOpeningBook type check default true");
             printUciLine("uciok");
@@ -235,30 +236,9 @@ void uciLoop() {
                 }
             }
             
-            // Allocate 1/40 of remaining time plus 80% of the increment,
-            // with a 50 ms minimum.
-            int timeForMove = -1;
-            
-            if (movetime >= 0) {
-                timeForMove = movetime;
-            }
-            else if ((board.sideToMove == WHITE && wtime >= 0) ||
-                     (board.sideToMove == BLACK && btime >= 0)) {
-                
-                int timeLeft = (board.sideToMove == WHITE) ? wtime : btime;
-                int increment = (board.sideToMove == WHITE) ? winc : binc;
-
-                // Move overhead / safety buffer to prevent time forfeit on pipe latency.
-                const int safetyBuffer = increment > 0 ? 10 : 25;
-                const int effectiveTimeLeft = std::max(1, timeLeft - safetyBuffer);
-
-                double plannedTime = effectiveTimeLeft / 40.0;
-                if (effectiveTimeLeft > increment * 2) plannedTime += increment * 0.8;
-                const double minimumThinkTime = std::min(50.0, effectiveTimeLeft * 0.25);
-                timeForMove = static_cast<int>(std::ceil(std::max(minimumThinkTime, plannedTime)));
-                timeForMove = std::min(timeForMove, effectiveTimeLeft);
-
-            }
+            // Allocate time using Stockfish-style TimeManager
+            TimeManager timeManager;
+            timeManager.init(board.sideToMove, movetime, wtime, btime, winc, binc);
             int maxDepth = requestedDepth > 0 ? std::min(requestedDepth, MAX_DEPTH) : MAX_DEPTH;
 
             const std::string bookMove = useOpeningBook
@@ -269,14 +249,10 @@ void uciLoop() {
                 continue;
             }
             
-            // Log intentions
-            // std::cout << "info string Starting search with time=" << timeForMove 
-            //           << "ms maxDepth=" << maxDepth << "\n" << std::flush;
-            
             Search::clearStopRequest();
-            searchThread = std::thread([&board, maxDepth, timeForMove]() {
+            searchThread = std::thread([&board, maxDepth, timeManager]() {
                 try {
-                    const Move bestMove = Search::findBestMove(board, maxDepth, timeForMove);
+                    const Move bestMove = Search::findBestMove(board, maxDepth, timeManager);
                     printUciLine("bestmove " + moveToUCI(bestMove));
                 }
                 catch (...) {
