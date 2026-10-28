@@ -3,6 +3,7 @@ chess
 *.exe
 *.out
 /build/
+/build-*/
 /build-linux/
 /build-android/
 /build-windows/

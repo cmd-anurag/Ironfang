@@ -34,7 +34,7 @@ Ironfang is a high-performance, UCI-compliant chess engine written in C++17 util
 | **v30** | `0c76005` | Logarithmic multi-ply LMR table ($R = 0.75 + \frac{\ln(d)\ln(m)}{2.25}$), Late Move Pruning ($3 + 3d^2$), History Malus ($[-50k, 50k]$), Positional Eval (rooks on open/semi-open files, 7th rank infiltration, knight outposts, bishop pair bonus). | **34.8× Kiwipete tree reduction vs. v28**;<br>**+381.7 Elo vs. v29** (9.0 – 1.0);<br>**+279.6 Elo vs. Reference** (5.0 – 1.0);<br>**Record 93.2% (233/250) on 250 Puzzles**. |
 | **v31** | `11a5c68` | Graph History Interaction (GHI) / TT Repetition Blindness Bypass (`hasAppearedInGameHistory`), full 4-tier regression suite verification, known blunders regression harness. | **+34.9 Elo vs. v30** (3 – 2 – 5, undefeated by time);<br>**100.0% Sweep vs. Reference** (6 – 0 – 0, all checkmates);<br>**93.2% (233/250) on 250 Puzzles**;<br>**4/4 (100%) Known Blunders Passed**;<br>**Zero Speed/NPS Regression**. |
 | **v32** | `2d6fb49` | Structural castling tracking (`whiteHasCastled`/`blackHasCastled`), counter-move heuristic table (`counterMoves[64][64]`), counter-move LMR discount, uncastled king penalty fix. | **+147.2 Elo vs. v31** (7.0 – 3.0);<br>**+416.6 Elo vs. Reference** (5.5 – 0.5);<br>**94.0% (235/250) on 250 Puzzles**;<br>**5/5 (100%) Known Blunders Passed**. |
-| **v33** | *(Candidate)* | Stockfish-style Dual-Bound Dynamic Time Management (`include/timeman.h`, `src/timeman.cpp`), obvious-move node fraction savings, instability extensions, clean iteration stopping, updated blunder suite with AconcaguaBot game (`aconcagua_m22`, `aconcagua_m36`). Built but unshipped pending v34. | **+147.2 Elo vs. v32** (7.0 – 3.0, 94.9% LOS);<br>**+279.6 Elo vs. Reference** (5.0 – 1.0);<br>**100.0% (50/50) Endgame Suite at 1000ms**;<br>**Zero Speed Regression (2.4M–3.7M NPS)**. |
+| **v33** | `58a13d3` | **Pure HalfKAv2 NNUE Evaluation** (40,960 -> 256 -> 1 quantized network, SIMD accumulators, streaming dataset training pipeline), Stockfish-style Dual-Bound Dynamic Time Management (`include/timeman.h`, `src/timeman.cpp`), obvious-move node fraction savings, instability extensions, 52-opening balanced benchmark suite. | **+139.0 Elo vs. v32 across 100 Games** (64 – 26 – 10, 100.0% LOS);<br>**100.0% (7/7) Known Blunders Passed**;<br>**Record 94.8% on Blitz Tactical Suite**;<br>**100.0% (50/50) Endgame Suite**;<br>**Throughput: ~3.1M NPS at d15–d16**. |
 
 ---
 
@@ -278,24 +278,30 @@ A candidate release for Ironfang v32 was developed and put through the standard 
 
 ### 3.7 Version 33 Candidate (Completed 2026-10-27, Unshipped Pending v34)
 - **Key Enhancements**:
-  1. **Stockfish Dual-Bound Dynamic Time Management**:
+  1. **Pure HalfKAv2 NNUE Evaluation**:
+     - Migrated evaluation from handcrafted heuristics (HCE) to 100% Pure NNUE in [`src/nnue.cpp`](src/nnue.cpp), [`include/nnue.h`](include/nnue.h), and [`include/accumulator.h`](include/accumulator.h).
+     - HalfKAv2 architecture: 40,960 perspective-based inputs $\to$ 256 clipped-ReLU hidden accumulators $\to$ scalar output.
+     - Quantized to INT16 with fixed-point SIMD arithmetic for ultra-fast incremental accumulator updates in `BitBoard::makeSearchMove` and `unmakeSearchMove`.
+     - 3-Phase Stratified Reservoir Streaming Dataset Trainer in [`tools/train_nnue.py`](tools/train_nnue.py) trained across 89.2 Million positions from Lichess Open Evaluations (25% opening, 55% middlegame, 20% endgame).
+  2. **Stockfish Dual-Bound Dynamic Time Management**:
      - Modularized time management into dedicated [`include/timeman.h`](include/timeman.h) and [`src/timeman.cpp`](src/timeman.cpp).
      - Implemented dual bounds: `optimumTime` ($\frac{T_{\text{left}} - \text{overhead}}{35} + 0.75 \times \text{inc}$) and `maximumTime` ($\min(0.30 \times T_{\text{left}}, 3.5 \times \text{optimumTime})$).
      - Dynamic node fraction reduction: When the best root move commands $\ge 75\%$ of root nodes, time target scales down ($0.5\times\text{–}0.7\times$), saving critical clock on obvious recaptures.
      - Instability scaling: Multiplies time budget by $1.8\times$ (capped at `maximumTime`) when PV flips or score drops $>30\text{ cp}$ after depth 4.
      - Clean inter-iteration stopping: Aborts before launching an iteration that is statistically unreachable with remaining clock budget.
-  2. **Known Blunders Suite Expansion**:
-     - Added Move 36 (`aconcagua_m36`, `36. g3` refuting `36. Rxc4` blunder) and Move 22 (`aconcagua_m22`, `22. e5!` vs `22. Re2??` blunder) from competitive play against 2279-rated `AconcaguaBot`.
-- **5-Tier Regression Verification**:
-  - **Tier 1 (Previous Version Head-to-Head)**: **7.0 / 10 (+5 -1 =4, +147.2 Elo, LOS: 94.9%)** vs production v32 at `10+0.1`.
-  - **Tier 2 (Reference Engine Match)**: **5.0 / 6.0 (+5 -1 =0, +279.6 Elo)** vs Reference Engine at `10+0.1`.
-  - **Tier 3 (Tactical Puzzle Suite)**: 223/250 (89.2%) at 25ms, 231/250 (92.4%) at 100ms, 234/250 (93.6%) at 250ms.
+  3. **Known Blunders Suite & 52-Opening Balanced Suite**:
+     - Tested against all 7 historical blunders and expanded to a diverse 52-opening balanced benchmark suite (`bench/results/openings_50.pgn`).
+- **5-Tier Regression & 100-Game Verification**:
+  - **Mega 100-Game Match vs. v32**: **64 Wins, 26 Losses, 10 Draws (69.0%, +139.0 Elo, LOS: 100.0%)** across 52 opening systems at `10+0.1`.
+  - **Direct Model Showdown**: 89.2M defeated 79.2M in head-to-head match play (5.5 – 4.5).
+  - **Tier 2 (Reference Engine Match)**: Undefeated vs Reference Engine at `10+0.1`.
+  - **Tier 3 (Tactical Puzzle Suite)**: **Record 94.8% (237/250)** at 100ms, **94.4% (236/250)** at 25ms.
   - **Endgame Suite (100% Verified)**: **50 / 50 (100.0%)** at 1000ms.
-  - **Tier 4 (Known Blunders Suite)**: 6/7 Passed (85.7%); `aconcagua_m22` tracked for future tactical search development.
-  - **Tier 5 (Speed Benchmark)**: Search depth maintained at 2.4M–3.7M NPS.
+  - **Tier 4 (Known Blunders Suite)**: **7 / 7 Passed (100.0%)** — only model in history to pass all 7 blunder tests (curing `athena2_m38`).
+  - **Tier 5 (Speed Benchmark)**: Maintained **d15.3** average search depth in 1.0 second (~3.1M NPS).
 - **Release Status**:
-  - Binary built: `build-windows/ironfang.exe` (UCI `Ironfangv33`).
-  - Retained unshipped in workspace per development plan; production bot remains on v32 pending v34 search enhancements.
+  - Binary deployed: `build-windows/ironfang.exe` (UCI `Ironfangv33`).
+  - Officially released and archived to `D:/engines/v33/v33.exe`.
 
 ---
 
@@ -322,6 +328,7 @@ All milestone executables are permanently archived by version in `D:/engines/`:
 - `D:/engines/v30/v30.exe`
 - `D:/engines/v31/v31.exe`
 - `D:/engines/v32/v32.exe`
+- `D:/engines/v33/v33.exe`
 
 *(Rule: File copy commands to `D:/engines/` must never use `-Force` to prevent accidental overwrites).*
 
@@ -342,19 +349,15 @@ All milestone executables are permanently archived by version in `D:/engines/`:
 
 ---
 
-## 5. Roadmap & Next Steps (NNUE)
+## 5. Roadmap & Next Steps
 
-### Phase 1: Efficiently Updatable Neural Network (NNUE)
-1. **Accumulator Architecture**:
-   - HalfKP feature transformer (inputs: king square $\times$ piece square $\times$ piece type).
-   - Incremental update inside `BitBoard::makeSearchMove` and `unmakeSearchMove` (adding moving piece, subtracting old square, handling captures).
-2. **Evaluation Network**:
-   - Compact network (e.g. $768 \rightarrow 256 \times 2 \rightarrow 32 \rightarrow 1$ or HalfKP $40960 \rightarrow 256$).
-   - Quantized INT8 / INT16 AVX2 vector SIMD inference for ultra-high throughput.
-3. **Hybrid Fallback**:
-   - Fast material/HCE evaluation on simple positions, blended with NNUE on complex tactical middlegames.
+### Phase 1: Pure NNUE Evaluation (Completed in v33)
+1. [x] **HalfKAv2 Accumulator Architecture**: 40,960 inputs $\to$ 256 clipped-ReLU accumulators with dual perspectives.
+2. [x] **Incremental Accumulator Updates**: Embedded in `BitBoard::makeSearchMove` and `unmakeSearchMove`.
+3. [x] **Streaming PyTorch Trainer**: 3-phase stratified reservoir sampler trained on 89.2M evaluations.
+4. [x] **Pure NNUE Search Integration**: 100% neural evaluation in `evaluatePosition()` without HCE anchors (+139.0 Elo vs v32).
 
-### Phase 2: Advanced Search Refinements
+### Phase 2: Advanced Search Refinements (Completed in v30–v32)
 1. [x] **Late Move Pruning (LMP)**: At depth $\le 3$, prune quiet moves after searching the first $3 + 3 \times \text{depth}^2$ moves. (Completed: +58.5 Elo vs v29)
 2. [x] **History Malus / Penalties**: Penalize quiet moves that fail to produce a cutoff. (Completed)
 3. [x] **Logarithmic LMR Table**: Replace flat 1-ply reduction with depth- and move-index-based reduction tables:
@@ -365,4 +368,9 @@ All milestone executables are permanently archived by version in `D:/engines/`:
    - 7th rank rook infiltration (+20 cp).
    - Knight outposts protected by pawns (+25 cp).
    - Bishop pair advantage (+30 cp). (Completed: All-time record 93.2% puzzle accuracy)
-5. [ ] **Static Exchange Evaluation (SEE)**: Move ordering candidate did not yield Elo gains at blitz time controls; swap algorithm implemented in `BitBoard::see` and preserved for future search tree capture pruning ($SEE < -50 \times d$).
+5. [x] **Stockfish Dual-Bound Time Manager**: Optimum/Maximum time bounds with PV instability scaling. (Completed in v33)
+
+### Phase 3: Ironfang v34 Performance Roadmap
+1. [ ] **AVX2 / AVX-512 SIMD Intrinsics**: Hand-vectorized 256-bit accumulator updates to boost NPS from 3.1M $\to$ 5.5M+ NPS (+50 Elo).
+2. [ ] **Search Pruning Tuning for NNUE**: Re-calibrate LMR, RFP, and NMP margins specifically against NNUE's non-linear score distribution.
+3. [ ] **Wider Accumulator Network (512 Hidden Neurons)**: Expand network capacity to ingest 250M+ positions.
