@@ -26,7 +26,7 @@ except ImportError:
 # HalfKAv2 constants: 64 King Squares * 11 Piece Types * 64 Squares = 45,056
 NNUE_INPUTS = 45056
 PADDING_IDX = 45056
-NNUE_HIDDEN = 256
+NNUE_HIDDEN = 512
 QA = 255
 QB = 64
 SCALE = 400.0
@@ -388,7 +388,7 @@ def train(args):
     print("=" * 70)
     print("IRONFANG NNUE NEURAL NETWORK TRAINER (HalfKAv2)")
     print("=" * 70)
-    print(f"Architecture: HalfKAv2 ({NNUE_INPUTS:,} inputs -> {NNUE_HIDDEN}x2 -> 1)")
+    print(f"Architecture: HalfKAv2 ({NNUE_INPUTS:,} inputs -> {args.hidden}x2 -> 1)")
     print(f"Hardware Compute Device: {device.type.upper()}")
     if device.type == "cuda":
         print(f"NVIDIA GPU: {torch.cuda.get_device_name(0)}")
@@ -414,7 +414,7 @@ def train(args):
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, drop_last=(len(dataset) > args.batch_size))
 
     # Step 3: Initialize model, optimizer, scheduler & loss
-    model = IronfangNNUE().to(device)
+    model = IronfangNNUE(hidden=args.hidden).to(device)
     if args.resume and os.path.isfile(args.resume):
         print(f"Resuming weights from checkpoint: {args.resume}")
         model.load_state_dict(torch.load(args.resume, map_location=device))
@@ -484,6 +484,7 @@ def train(args):
 
 def main():
     parser = argparse.ArgumentParser(description="Train Ironfang HalfKAv2 NNUE Network on Lichess Dataset")
+    parser.add_argument("--hidden", type=int, default=512, help="Hidden layer size (default: 512)")
     parser.add_argument("--count", type=int, default=10000000, help="Number of positions to train on (default: 10,000,000)")
     parser.add_argument("--start-batch", type=int, default=0, help="Batch index to start streaming from (default: 0)")
     parser.add_argument("--opening-ratio", type=float, default=0.25, help="Target ratio of openings (>= 26 pieces) (default: 0.25)")

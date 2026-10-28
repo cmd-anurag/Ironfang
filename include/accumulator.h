@@ -8,7 +8,7 @@
 // 64 king squares * 11 piece types * 64 squares = 45,056 features per perspective
 // Friendly King is the bucket index (0..63); other 11 piece types (5 friendly + 6 enemy) are features.
 constexpr int NNUE_INPUTS = 45056;
-constexpr int NNUE_HIDDEN = 256;
+constexpr int NNUE_HIDDEN = 512;
 constexpr int NNUE_SCALE = 400;
 
 struct alignas(64) Accumulator {
