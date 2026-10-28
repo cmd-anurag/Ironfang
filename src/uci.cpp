@@ -10,7 +10,7 @@
 #include "bitboard.h"
 #include "search.h"
 #include "timeman.h"
-#include "opening_book.h"
+#include "nnue.h"
 #include "evaluate.h"
 
 // bro why does c++ not have a built in trim function lol
@@ -22,7 +22,6 @@ std::string trim(const std::string& s) {
 
 namespace {
 constexpr int MAX_GAME_REPETITION_HISTORY = 1024 - MAX_PLY - 1;
-bool useOpeningBook = true;
 
 void printUciLine(const std::string& line) {
     std::lock_guard<std::mutex> outputLock(uciOutputMutex);
@@ -57,13 +56,13 @@ bool applyUciMoveAndRecord(BitBoard& board, const std::string& moveText) {
 
 void uciLoop() {
     srand(time(NULL));
-    OpeningBook::initialize();
+    NNUE::initialize();
     std::string line;
     BitBoard board;
 
     std::vector<std::string> lastUCIMoves;
     std::string lastFEN;
-    int gamePly = 0;
+    [[maybe_unused]] int gamePly = 0;
     std::thread searchThread;
 
     auto stopAndJoinSearch = [&]() {
@@ -81,7 +80,8 @@ void uciLoop() {
         if(token == "uci") {
             printUciLine("id name Ironfangv33");
             printUciLine("id author dark");
-            printUciLine("option name UseOpeningBook type check default true");
+            printUciLine("option name UseNNUE type check default true");
+            printUciLine("option name EvalFile type string default resources/ironfang.nnue");
             printUciLine("uciok");
         }
         else if (token == "setoption") {
@@ -91,9 +91,13 @@ void uciLoop() {
             std::string valueToken;
             std::string value;
             iss >> nameToken >> optionName >> valueToken >> value;
-            if (nameToken == "name" && optionName == "UseOpeningBook" &&
+            if (nameToken == "name" && optionName == "UseNNUE" &&
                      valueToken == "value") {
-                useOpeningBook = value == "true";
+                useNNUE = (value == "true") && NNUE::isLoaded();
+            }
+            else if (nameToken == "name" && optionName == "EvalFile" &&
+                     valueToken == "value") {
+                NNUE::loadFile(value);
             }
         }
         else if(token == "isready") {
@@ -241,14 +245,6 @@ void uciLoop() {
             timeManager.init(board.sideToMove, movetime, wtime, btime, winc, binc);
             int maxDepth = requestedDepth > 0 ? std::min(requestedDepth, MAX_DEPTH) : MAX_DEPTH;
 
-            const std::string bookMove = useOpeningBook
-                ? OpeningBook::chooseMove(board, gamePly)
-                : std::string{};
-            if (!bookMove.empty()) {
-                printUciLine("bestmove " + bookMove);
-                continue;
-            }
-            
             Search::clearStopRequest();
             searchThread = std::thread([&board, maxDepth, timeManager]() {
                 try {
@@ -281,6 +277,10 @@ void uciLoop() {
                    << " shield=" << breakdown.blackKingSafety
                    << " mopup=" << breakdown.blackMopUp
                    << " positional=" << breakdown.blackPositional;
+            if (useNNUE && NNUE::isLoaded()) {
+                Accumulator acc;
+                result << " nnue=" << NNUE::evaluate(board, acc);
+            }
             printUciLine(result.str());
         }
         else if (token == "hash") {

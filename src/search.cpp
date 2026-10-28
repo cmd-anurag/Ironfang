@@ -1,5 +1,6 @@
 #include "search.h"
 #include "evaluate.h"
+#include "nnue.h"
 #include "zobrist.h"
 #include "tt.h"
 #include <algorithm>
@@ -135,6 +136,14 @@ std::array<std::array<SearchMove, MAX_PLY>, MAX_PLY> pvTable{};
 std::array<int, MAX_PLY> pvLength{};
 std::array<std::array<SearchMove, MAX_SEARCH_MOVES>, MAX_PLY> searchMoveBuffers;
 std::array<std::array<int, MAX_SEARCH_MOVES>, MAX_PLY> searchMoveScores;
+std::array<Accumulator, MAX_PLY + 1> accumulatorStack;
+
+inline int evaluatePosition(const BitBoard& board, int ply) {
+    if (useNNUE && NNUE::isLoaded() && ply <= MAX_PLY) {
+        return NNUE::evaluate(board, accumulatorStack[ply]);
+    }
+    return Evaluation::evaluate(board);
+}
 
 // Deadline and cancellation state.
 std::chrono::steady_clock::time_point hardSearchDeadline;
@@ -929,6 +938,10 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, const TimeManager& tm) 
     TT.totalStoreAttempts = 0;
     TT.actualStores = 0;
     TT.overwritten = 0;
+
+    if (useNNUE && NNUE::isLoaded()) {
+        NNUE::refreshAccumulator(board, accumulatorStack[0]);
+    }
     
     // Start timing
     auto startTime = std::chrono::steady_clock::now();
@@ -1030,7 +1043,7 @@ Move Search::findBestMove(BitBoard& board, int maxDepth, const TimeManager& tm) 
         // the alpha-beta bounds around the previous iteration's score.
         int alpha = -INF;
         int beta = INF;
-        int delta = 30;
+        int delta = (useNNUE && NNUE::isLoaded()) ? 50 : 30;
 
         if (depth >= 4 && std::abs(bestScore) < MATE_THRESHOLD) {
             alpha = std::max(-INF, bestScore - delta);
@@ -1167,13 +1180,13 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     }
 
     if (ply >= MAX_PLY - 1) {
-        return Evaluation::evaluate(board);
+        return evaluatePosition(board, ply);
     }
 
     const bool appendPathPosition = ply > 0 || board.pathDepth == 0 ||
         board.repetitionPath[board.pathDepth - 1] != board.zobristKey;
     if (appendPathPosition) {
-        if (board.pathDepth >= 1024) return Evaluation::evaluate(board);
+        if (board.pathDepth >= 1024) return evaluatePosition(board, ply);
         board.repetitionPath[board.pathDepth++] = board.zobristKey;
     }
     const RepetitionPathEntryGuard pathEntryGuard{board, appendPathPosition};
@@ -1223,11 +1236,11 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     }
 
     const bool inCheck = board.isInCheck();
-    const int staticEval = !inCheck ? Evaluation::evaluate(board) : -INF;
+    const int staticEval = !inCheck ? evaluatePosition(board, ply) : -INF;
 
     // Reverse Futility Pruning (RFP / Static Null Move Pruning)
     if (depth <= 3 && ply > 0 && !inCheck && beta < MATE_THRESHOLD && alpha > -MATE_THRESHOLD) {
-        const int rfpMargin = 75 * depth;
+        const int rfpMargin = (useNNUE && NNUE::isLoaded() ? 90 : 75) * depth;
         if (staticEval - rfpMargin >= beta) {
             return beta;
         }
@@ -1297,6 +1310,10 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         Piece capturedPiece = board.getPiece((moves[moveIndex].value >> 6) & 0x3F);
         if (moveFlag == COMPACT_MOVE_EN_PASSANT)
             capturedPiece = previousState.sideToMove == WHITE ? BP : WP;
+        if (useNNUE && NNUE::isLoaded() && ply + 1 <= MAX_PLY) {
+            accumulatorStack[ply + 1] = accumulatorStack[ply];
+            NNUE::updateMove(accumulatorStack[ply + 1], board, moves[moveIndex].value);
+        }
         board.makeSearchMove(moves[moveIndex].value, capturedPiece);
 
         // En passant's destination is empty, so classify it as quiet for LMR,
@@ -1487,12 +1504,14 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int ply) {
     if (ply < MAX_PLY) pvLength[ply] = ply;
 
     if (checkSearchDeadline()) return 0;
-    if (ply >= MAX_PLY - 1) return Evaluation::evaluate(board);
+    if (ply >= MAX_PLY - 1) return evaluatePosition(board, ply);
 
     const bool inCheck = board.isInCheck();
     if (!inCheck) {
-        const int standPat = Evaluation::evaluate(board);
-        if (standPat >= beta) return beta;
+        const int standPat = evaluatePosition(board, ply);
+        if (standPat >= beta) {
+            return beta;
+        }
         alpha = std::max(alpha, standPat);
     }
 
@@ -1513,6 +1532,10 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int ply) {
         Piece capturedPiece = board.getPiece((moves[moveIndex].value >> 6) & 0x3F);
         if (moveFlag == COMPACT_MOVE_EN_PASSANT)
             capturedPiece = previousState.sideToMove == WHITE ? BP : WP;
+        if (useNNUE && NNUE::isLoaded() && ply + 1 <= MAX_PLY) {
+            accumulatorStack[ply + 1] = accumulatorStack[ply];
+            NNUE::updateMove(accumulatorStack[ply + 1], board, moves[moveIndex].value);
+        }
         board.makeSearchMove(moves[moveIndex].value, capturedPiece);
         const int score = -quiescenceSearch(board, -beta, -alpha, ply + 1);
         board.unmakeSearchMove(moves[moveIndex].value, previousState, capturedPiece);

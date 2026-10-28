@@ -18,3 +18,8 @@ __pycache__/
 tools/reference-parity/bin/
 tools/reference-parity/obj/
 sc.py
+
+# Datasets and training checkpoints
+/data/
+/resources/checkpoint.pt
+/resources/leorik_256.nnue

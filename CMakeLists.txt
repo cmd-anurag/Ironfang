@@ -39,7 +39,7 @@ set(SOURCES
     src/main.cpp
     src/magic.cpp
     src/move.cpp
-    src/opening_book.cpp
+    src/nnue.cpp
     src/precomputedEvalTables.cpp
     src/precomputedMagics.cpp
     src/search.cpp
@@ -55,14 +55,13 @@ find_package(Threads REQUIRED)
 target_link_libraries(ironfang PRIVATE Threads::Threads)
 
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/resources)
-configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/resources/Book.txt
-    ${CMAKE_CURRENT_BINARY_DIR}/resources/Book.txt
-    COPYONLY
-)
-target_compile_definitions(ironfang PRIVATE
-    IRONFANG_BOOK_PATH="${CMAKE_CURRENT_SOURCE_DIR}/resources/Book.txt"
-)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/resources/ironfang.nnue)
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/ironfang.nnue
+        ${CMAKE_CURRENT_BINARY_DIR}/resources/ironfang.nnue
+        COPYONLY
+    )
+endif()
 
 # Optional run target (disable for Android/Windows)
 if(NOT ANDROID AND NOT WINDOWS)
