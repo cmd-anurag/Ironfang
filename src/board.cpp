@@ -35,6 +35,7 @@ void Board::setStartPosition() {
     }
 
     sideToMove = WHITE;
+    halfmoveClock = 0;
     whiteKingsideCastle = true;
     whiteQueensideCastle = true;
     blackKingsideCastle = true;
@@ -118,6 +119,19 @@ bool Board::setPositionFromFEN(const std::string& fen) {
         int file = token[0] - 'a';
         int rank = 8 - (token[1] - '0');
         enPassantSquare = rank * 8 + file;
+    }
+
+    halfmoveClock = 0;
+    if (ss >> token) {
+        size_t parsedLength = 0;
+        int parsedHalfmoveClock = 0;
+        try {
+            parsedHalfmoveClock = std::stoi(token, &parsedLength);
+        } catch (...) {
+            return false;
+        }
+        if (parsedLength != token.size() || parsedHalfmoveClock < 0) return false;
+        halfmoveClock = parsedHalfmoveClock;
     }
     
     return true;
@@ -237,12 +251,13 @@ bool Board::makeMove(const Move &move) {
         blackQueensideCastle,
         whiteKingSquare,
         blackKingSquare,
-        zobristKey
+        zobristKey,
+        halfmoveClock
     };
 
     if(enPassantSquare != -1) {
         int file = enPassantSquare % 8;
-        zobristKey ^= zobristEnPassant[file];
+        zobristKey ^= zobristEnPassant[file + 1];
     }
     enPassantSquare = -1;
     
@@ -346,7 +361,7 @@ bool Board::makeMove(const Move &move) {
                 enPassantSquare = move.from + (sideToMove == WHITE? -8 : 8);
                 // zobrist changes
                 int file = enPassantSquare % 8;
-                zobristKey ^= zobristEnPassant[file];
+                zobristKey ^= zobristEnPassant[file + 1];
             }
 
             if(move.promotion) {
@@ -415,10 +430,16 @@ bool Board::makeMove(const Move &move) {
     }
 
     // zobrist changes
-    if(prevState.whiteKingsideCastle != whiteKingsideCastle) zobristKey ^= zobristCastling[0];
-    if(prevState.whiteQueensideCastle != whiteQueensideCastle) zobristKey ^= zobristCastling[1];
-    if(prevState.blackKingsideCastle != blackKingsideCastle) zobristKey ^= zobristCastling[2];
-    if(prevState.blackQueensideCastle != blackQueensideCastle) zobristKey ^= zobristCastling[3];
+    const int previousCastling = castlingRightsIndex(
+        prevState.whiteKingsideCastle, prevState.whiteQueensideCastle,
+        prevState.blackKingsideCastle, prevState.blackQueensideCastle);
+    const int currentCastling = castlingRightsIndex(
+        whiteKingsideCastle, whiteQueensideCastle,
+        blackKingsideCastle, blackQueensideCastle);
+    if (previousCastling != currentCastling) {
+        zobristKey ^= zobristCastling[previousCastling];
+        zobristKey ^= zobristCastling[currentCastling];
+    }
 
     sideToMove = (sideToMove == WHITE)? BLACK : WHITE;
     zobristKey ^= zobristBlackToMove;
@@ -436,6 +457,12 @@ bool Board::makeMove(const Move &move) {
             return false;
         }
     } 
+
+    if (move.piece == WP || move.piece == BP || move.capture || move.isEnPassant) {
+        halfmoveClock = 0;
+    } else {
+        ++halfmoveClock;
+    }
     return true;
 }
 
@@ -448,6 +475,7 @@ void Board::unmakeMove(const Move &move, const Gamestate &prevState) {
     whiteKingSquare = prevState.whiteKingSquare;
     blackKingSquare = prevState.blackKingSquare;
     enPassantSquare = prevState.enPassantSquare;
+    halfmoveClock = prevState.halfmoveClock;
     sideToMove = (sideToMove == WHITE) ? BLACK : WHITE;
 
 
@@ -520,7 +548,8 @@ bool Board::tryMove(const Move& move) {
         blackQueensideCastle,
         whiteKingSquare,
         blackKingSquare,
-        zobristKey
+        zobristKey,
+        halfmoveClock
     };
 
     if(!makeMove(move)) return false;

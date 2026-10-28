@@ -1,0 +1,4 @@
+id,game,side,fullmove,fen,v15_move,v15_depth,v15_score_cp,stockfish_depth,stockfish_bestmove,stockfish_best_score_cp,stockfish_score_for_v15_move_cp,notes
+v15ref_01,2026-10-24-v15-white-reference-black,White,15,"r1b2rk1/p2p1pbp/2n1p1p1/qB6/4N3/4N3/PPP2PPP/R1BQK2R w KQ - 1 15",c2c3,8,50,20,e4c3,16,-74,"SF depth-20 root choice and restricted search for c2c3; actual move follows 14...Qa5"
+v15ref_02,2026-10-24-v15-white-reference-black,White,17,"r1b2rk1/p2p1pbp/q1nNp1p1/8/8/2P1N3/PP3PPP/R1BQK2R w KQ - 2 17",c3c4,8,44,20,e3g4,-59,-258,"SF depth-20 root choice and restricted search for c3c4; actual position follows 16...Qxa6"
+v15ref_03,2026-10-24-v15-white-reference-black,White,18,"1rb2rk1/p2p1pbp/q1nNp1p1/8/2P5/4N3/PP3PPP/R1BQK2R w KQ - 1 18",d6c8,8,30,18,e1g1,-257,,"SF preferred castling; candidate move not separately searched"

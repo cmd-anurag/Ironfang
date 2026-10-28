@@ -1,0 +1,8 @@
+id,game_id,move_num,side,fen,blunder_move,good_moves,moves,description
+athena1_m14,omjbaV8R,14,b,r2q1rk1/pp1b1ppp/2np1b2/3Np3/1PB1P3/P4N1P/2P2PP1/R2Q1RK1 b - - 0 14,c5b4,b7b6;d7e6,,Avoid opening a-file for White rooks
+athena1_m15,omjbaV8R,15,b,r2q1rk1/pp1b1ppp/2np1b2/3Np3/1P2P3/5N1P/2P2PP1/R2Q1RK1 b - - 0 15,b7b5,d7e6;a7a6,,Avoid giving up a-file and creating backward b-pawn
+athena2_m38,WXQrrUuA,38,w,8/5R2/6kp/8/P2P4/4r3/6P1/6K1 w - - 1 38,f7f8,f7f3;f7a7;g1f2,,Avoid leaving rook passive after 37... Kg6
+athena2_m53_repetition,WXQrrUuA,53,w,8/3k4/7p/P4K1R/3P2P1/8/8/r7 w - - 15 53,f5e4,f5f4;f5f6;f5g6;h5h6,c2c4 e7e6 b1c3 g8f6 d2d4 f8b4 d1c2 b8c6 g1f3 d7d5 c1g5 e8g8 e2e3 h7h6 g5f6 d8f6 a2a3 b4c3 c2c3 c8d7 f1d3 c6e7 e1g1 d5c4 c3c4 d7c6 f3e5 f8d8 e5c6 e7c6 d3e4 d8d6 a1c1 a8b8 c4a4 a7a6 e4c6 b7c6 c1c6 d6c6 a4c6 b8b2 c6c7 g8h7 c7a7 h7g6 a7a6 f6f5 a3a4 g6h7 a6c4 g7g6 h2h3 g6g5 c4c6 b2a2 f2f4 g5g4 h3g4 f5g4 f4f5 h7g7 f5e6 g4e6 c6f3 a2a3 f3g3 g7h7 g3f2 e6e3 f2e3 a3e3 f1f7 h7g6 f7f8 e3d3 f8d8 d3d1 g1h2 g6f6 a4a5 f6e7 d8d5 d3d3 h2g1 d1d2 g1h2 d3d3 g2g4 d3a3 d5h5 e7d7 h2g2 a3a1 g2f3 a1f1 f3e4 f1e1 e4f5 e1a1 f5e4 a1e1 e4f5 e1a1,Avoid 3-fold repetition draw when up +5.4 pawns
+mrtonnerre_m11,4zp7OsMz,11,w,r1b1kb1r/1pq2ppp/p3pn2/P1p5/2B5/2NP4/1PP2PPP/R1BQK2R w KQkq - 1 11,e1f1,e1g1;c1g5;c1e3;c3e4,,Avoid artificial king walk Kf1 surrendering castling rights
+aconcagua_m36,bGHWdnKv,36,w,4k3/1q2p3/3p1p2/r2PnP2/2p1N2r/2R5/1P2Q1PP/3R3K w - - 0 36,c3c4,g2g3;e2e1;e4f2,,Avoid losing exchange with 36. Rxc4 in time pressure
+aconcagua_m22,bGHWdnKv,22,w,r3k2r/3npp1b/3p3p/2pP4/1q1bPB2/2N2QN1/1P4PP/4RR1K w - - 0 22,e1e2,e4e5,,Punish 21... Qxb4 blunder with 22. e5 attack against central king instead of passive 22. Re2

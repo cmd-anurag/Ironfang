@@ -1,7 +1,9 @@
 
 # Ironfang ♖
 
-IronFang is a simple UCI-compatible chess engine written from scratch in C++.
+IronFang is a UCI-compatible chess engine written from scratch in C++.
+
+> 📖 **Comprehensive Architecture & Development Guide**: See [DEVELOPMENT.md](DEVELOPMENT.md) for full algorithmic theory (Alpha-Beta, NMP, RFP, PVS, Futility Pruning), evaluation design, version history, and empirical benchmark results.
 
 
 ## Project Structure
@@ -64,6 +66,38 @@ cutechess-cli \
   -resign score=800 movecount=3 \
   -draw movenumber=50 movecount=5 score=10
 ```
+
+## Fixed-Depth Benchmark
+
+The benchmark runner searches a fixed set of FENs at a fixed depth and writes
+one CSV row per position. It starts a fresh engine process for each position
+so transposition-table contents do not leak between positions.
+
+```powershell
+cmake --build build-windows --config Release
+python tools/bench.py --engine build-windows/ironfang.exe --label candidate --depth 8 --output bench-results-candidate.csv
+python tools/compare_bench.py bench-results-v5.csv bench-results-candidate.csv
+```
+
+Save the current version's CSV before replacing its executable. The comparison
+is for regression diagnosis: fixed-depth node counts, speed, score, and move
+changes are useful signals, but score changes alone do not establish a strength
+gain. Use paired-color self-play for playing strength.
+
+The runner can also collect a deeper move/PV reference from another UCI engine:
+
+```powershell
+python tools/bench.py --engine D:/path/to/stockfish.exe --label stockfish --depth 14 --output bench-results-stockfish.csv
+```
+
+Use Stockfish's move and PV as analysis references; its NPS, node counts, and
+centipawn scores are not directly comparable to Ironfang's.
+
+The engine also reports `seldepth`, elapsed `time`, and per-search counters on
+an `info string stats` line. `tt_keyhits / tt_probes` is the full-key match rate;
+`tt_cutoffs / tt_probes` is the rate of probes that returned a usable bound.
+These are diagnostics, not universal strength targets, and should be compared
+on the same position suite, hash setup, build, and hardware.
 
 
 #### Current Capabilitites

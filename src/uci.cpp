@@ -4,9 +4,14 @@
 #include <vector>
 #include <cstdlib> 
 #include <ctime>
-#include "board.h"
+#include <algorithm>
+#include <cmath>
+#include <thread>
 #include "bitboard.h"
 #include "search.h"
+#include "timeman.h"
+#include "nnue.h"
+#include "evaluate.h"
 
 // bro why does c++ not have a built in trim function lol
 std::string trim(const std::string& s) {
@@ -15,14 +20,57 @@ std::string trim(const std::string& s) {
     return (start == std::string::npos) ? "" : s.substr(start, end - start + 1);
 }
 
+namespace {
+constexpr int MAX_GAME_REPETITION_HISTORY = 1024 - MAX_PLY - 1;
+
+void printUciLine(const std::string& line) {
+    std::lock_guard<std::mutex> outputLock(uciOutputMutex);
+    std::cout << line << '\n' << std::flush;
+}
+
+void recordGamePosition(BitBoard& board, bool irreversible) {
+    // A pawn move or capture makes all earlier positions unreachable under
+    // legal play, so only retain positions since the latest irreversible move.
+    if (irreversible) board.pathDepth = 0;
+
+    // Leave room in the fixed board history array for the search variation.
+    if (board.pathDepth >= MAX_GAME_REPETITION_HISTORY) {
+        for (int i = 1; i < board.pathDepth; ++i)
+            board.repetitionPath[i - 1] = board.repetitionPath[i];
+        --board.pathDepth;
+    }
+    board.repetitionPath[board.pathDepth++] = board.zobristKey;
+}
+
+bool applyUciMoveAndRecord(BitBoard& board, const std::string& moveText) {
+    Move move = uciToMove(moveText, board);
+    if (move.from < 0 || !board.makeMove(move)) return false;
+
+    const bool irreversible = move.capture || move.isEnPassant ||
+                              move.piece == WP || move.piece == BP;
+    recordGamePosition(board, irreversible);
+    return true;
+}
+}
+
 
 void uciLoop() {
     srand(time(NULL));
+    NNUE::initialize();
     std::string line;
     BitBoard board;
 
     std::vector<std::string> lastUCIMoves;
     std::string lastFEN;
+    [[maybe_unused]] int gamePly = 0;
+    std::thread searchThread;
+
+    auto stopAndJoinSearch = [&]() {
+        if (searchThread.joinable()) {
+            Search::requestStop();
+            searchThread.join();
+        }
+    };
 
     while(std::getline(std::cin, line)) {
         std::istringstream iss(line);
@@ -30,43 +78,81 @@ void uciLoop() {
         iss >> token;
 
         if(token == "uci") {
-            std::cout << "id name Ironfangv8\n" << std::flush;
-            std::cout << "id author dark\n" << std::flush;
-            std::cout << "uciok\n" << std::flush;
+            printUciLine("id name Ironfangv33");
+            printUciLine("id author dark");
+            printUciLine("option name UseNNUE type check default true");
+            printUciLine("option name EvalFile type string default resources/ironfang.nnue");
+            printUciLine("uciok");
+        }
+        else if (token == "setoption") {
+            stopAndJoinSearch();
+            std::string nameToken;
+            std::string optionName;
+            std::string valueToken;
+            std::string value;
+            iss >> nameToken >> optionName >> valueToken >> value;
+            if (nameToken == "name" && optionName == "UseNNUE" &&
+                     valueToken == "value") {
+                useNNUE = (value == "true") && NNUE::isLoaded();
+            }
+            else if (nameToken == "name" && optionName == "EvalFile" &&
+                     valueToken == "value") {
+                NNUE::loadFile(value);
+            }
         }
         else if(token == "isready") {
-            std::cout << "readyok\n" << std::flush;
+            printUciLine("readyok");
         }
         else if(token == "ucinewgame") {
+            stopAndJoinSearch();
             board.setStartPosition();
+            lastFEN.clear();
+            lastUCIMoves.clear();
+            gamePly = 0;
+            Search::newGame();
         }
         else if (token == "position") {
+            stopAndJoinSearch();
             std::string sub;
             iss >> sub;
 
             std::string currentFEN;
             std::vector<std::string> currentUCIMoves;
+            bool movesAlreadyParsed = false;
+            int currentGamePlyBase = 0;
 
             if(sub == "startpos") {
                 currentFEN = "startpos";
             }
             else if(sub == "fen") {
-                // FEN has 6 parts (piece placement, active color, castling,
-                // en passant, halfmove clock, fullmove counter)
-                std::string fenParts[6];
-                for(int i = 0; i < 6 && iss >> fenParts[i]; i++) {}
-                // Combine all parts into complete FEN
-                currentFEN = fenParts[0];
-                for(int i = 1; i < 6; i++) {
-                    if(!fenParts[i].empty()) {
-                        currentFEN += " " + fenParts[i];
+                // The first four FEN fields define the board state used here.
+                std::string placement, active, castling, ep;
+                if (!(iss >> placement >> active >> castling >> ep)) continue;
+                currentFEN = placement + " " + active + " " + castling + " " + ep;
+                std::string trailing;
+                int clockFields = 0;
+                while (iss >> trailing) {
+                    if (trailing == "moves") {
+                        movesAlreadyParsed = true;
+                        break;
                     }
+                    if (clockFields++ < 2) currentFEN += " " + trailing;
+                }
+                std::istringstream fenFields(currentFEN);
+                std::string fenPlacement, fenActive, fenCastling, fenEnPassant;
+                int halfmoveClock = 0;
+                int fullmoveNumber = 0;
+                fenFields >> fenPlacement >> fenActive >> fenCastling >> fenEnPassant;
+                fenFields >> halfmoveClock >> fullmoveNumber;
+                currentGamePlyBase = (fullmoveNumber - 1) * 2 + (fenActive == "b" ? 1 : 0);
+                if (movesAlreadyParsed) {
+                    while (iss >> trailing) currentUCIMoves.push_back(trailing);
                 }
             }
 
             // Check for "moves" token
             std::string nextToken;
-            if(iss >> nextToken && nextToken == "moves") {
+            if(!movesAlreadyParsed && iss >> nextToken && nextToken == "moves") {
                 // Parse all moves
                 std::string moveStr;
                 while(iss >> moveStr) {
@@ -91,8 +177,7 @@ void uciLoop() {
                 for (size_t i = lastUCIMoves.size();
                     i < currentUCIMoves.size(); ++i)
                 {
-                    Move m = uciToMove(currentUCIMoves[i], board);
-                    board.makeMove(m);
+                    applyUciMoveAndRecord(board, currentUCIMoves[i]);
                 }
             }
             else {
@@ -101,30 +186,45 @@ void uciLoop() {
                     board.setStartPosition();
                 }
                 else { // sub == "fen"
-                    board.setPositionFromFEN(currentFEN);
+                    if (!board.setPositionFromFEN(currentFEN)) {
+                        printUciLine("info string invalid FEN position");
+                        board.setStartPosition();
+                        lastFEN.clear();
+                        lastUCIMoves.clear();
+                        continue;
+                    }
                 }
 
+                // A FEN gives only the current position. For startpos, seed
+                // the initial position and then record each successfully
+                // replayed move so threefold checks include game history.
+                recordGamePosition(board, true);
+
                 for (const std::string &mv : currentUCIMoves) {
-                    Move m = uciToMove(mv, board);
-                    board.makeMove(m);
+                    applyUciMoveAndRecord(board, mv);
                 }
             }
 
             // “new baseline” for the next UCI command:
             lastFEN = currentFEN;
             lastUCIMoves = currentUCIMoves;
+            gamePly = currentGamePlyBase + static_cast<int>(currentUCIMoves.size());
         }
 
         else if(token == "go") {
+            stopAndJoinSearch();
             int movetime = -1;
+            int requestedDepth = -1;
             int wtime = -1, btime = -1;
             int winc = 0, binc = 0;
-            int movestogo = 30; // Default assumption
             
             std::string subtoken;
             while (iss >> subtoken) {
                 if (subtoken == "movetime") {
                     iss >> movetime;
+                }
+                else if (subtoken == "depth") {
+                    iss >> requestedDepth;
                 }
                 else if (subtoken == "wtime") {
                     iss >> wtime;
@@ -138,88 +238,71 @@ void uciLoop() {
                 else if (subtoken == "binc") {
                     iss >> binc;
                 }
-                else if (subtoken == "movestogo") {
-                    iss >> movestogo;
-                }
             }
             
-            // Enhanced time allocation
-            int timeForMove = -1;
-            
-            if (movetime > 0) {
-                timeForMove = movetime;
-            }
-            else if ((board.sideToMove == WHITE && wtime > 0) || 
-                     (board.sideToMove == BLACK && btime > 0)) {
-                
-                int timeLeft = (board.sideToMove == WHITE) ? wtime : btime;
-                int increment = (board.sideToMove == WHITE) ? winc : binc;
-                int pieceCount = 0;
-                
-                // More aggressive time allocation strategy
-                if (movestogo > 0) {
-                    // If we know moves to go, allocate more time per move
-                    timeForMove = (timeLeft / movestogo) + increment;  // Removed +1 from divisor, use full increment
-                } else {
-                    // Use more aggressive estimates for remaining moves
-                    uint64_t allPieces = board.getAllPieces();
-                    pieceCount = __builtin_popcountll(allPieces);
-                    
-                    int estimatedMoves;
-                    if (pieceCount > 24) {
-                        estimatedMoves = 30; // Early game (was 40)
-                    } else if (pieceCount > 12) {
-                        estimatedMoves = 20; // Middle game (was 30)
-                    } else {
-                        estimatedMoves = 12; // Endgame (was 20)
-                    }
-                    
-                    timeForMove = (timeLeft / estimatedMoves) + increment; // Use full increment
-                }
-                
-                // More aggressive safety margin - allow up to 25% of remaining time (was ~14%)
-                timeForMove = std::min(timeForMove, timeLeft / 4);
-                
-                
+            // Allocate time using Stockfish-style TimeManager
+            TimeManager timeManager;
+            timeManager.init(board.sideToMove, movetime, wtime, btime, winc, binc);
+            int maxDepth = requestedDepth > 0 ? std::min(requestedDepth, MAX_DEPTH) : MAX_DEPTH;
 
-                // Give extra time in the opening to prepare strategic advantage
-                if (pieceCount > 28) {
-                    timeForMove = static_cast<int>(timeForMove * 1.3);
+            Search::clearStopRequest();
+            searchThread = std::thread([&board, maxDepth, timeManager]() {
+                try {
+                    const Move bestMove = Search::findBestMove(board, maxDepth, timeManager);
+                    printUciLine("bestmove " + moveToUCI(bestMove));
                 }
-            }
-            
-            // Set a dynamic maximum depth based on time
-            int maxDepth = MAX_DEPTH; // Very high base value - time will stop search before this
-            if (timeForMove > 0 && timeForMove < 100) {
-                maxDepth = 6; // For very fast time controls
-            } else if (timeForMove > 0 && timeForMove < 500) {
-                maxDepth = 8; // For bullet time controls
-            }
-            
-            // Log intentions
-            // std::cout << "info string Starting search with time=" << timeForMove 
-            //           << "ms maxDepth=" << maxDepth << "\n" << std::flush;
-            
-            try {
-                
-                Move bestMove = Search::findBestMove(board, maxDepth, timeForMove);
-                
-                if (bestMove.from != -1) {
-                    std::cout << "bestmove " << moveToUCI(bestMove) << "\n" << std::flush;
+                catch (...) {
+                    printUciLine("info string search failed");
+                    printUciLine("bestmove 0000");
                 }
-                else {
-                    std::cout << "info string Using a1a1 fallback\n" << std::flush;
-                    std::cout << "bestmove a1a1\n" << std::flush;
-                }
+            });
+        }
+        else if (token == "stop") {
+            stopAndJoinSearch();
+        }
+        else if (token == "eval") {
+            stopAndJoinSearch();
+            const Evaluation::Breakdown breakdown = Evaluation::evaluateBreakdown(board);
+            std::ostringstream result;
+            result << "info string eval cp " << breakdown.score
+                   << " white material=" << breakdown.whiteMaterial
+                   << " pst=" << breakdown.whitePieceSquare
+                   << " pawn=" << breakdown.whitePawn
+                   << " shield=" << breakdown.whiteKingSafety
+                   << " mopup=" << breakdown.whiteMopUp
+                   << " positional=" << breakdown.whitePositional
+                   << " black material=" << breakdown.blackMaterial
+                   << " pst=" << breakdown.blackPieceSquare
+                   << " pawn=" << breakdown.blackPawn
+                   << " shield=" << breakdown.blackKingSafety
+                   << " mopup=" << breakdown.blackMopUp
+                   << " positional=" << breakdown.blackPositional;
+            if (useNNUE && NNUE::isLoaded()) {
+                Accumulator acc;
+                result << " nnue=" << NNUE::evaluate(board, acc);
             }
-            catch (...) {
-                // Emergency fallback
-                std::cout << "info string Using a1a1 fallback\n" << std::flush;
-                std::cout << "bestmove a1a1\n" << std::flush;
+            printUciLine(result.str());
+        }
+        else if (token == "hash") {
+            stopAndJoinSearch();
+            printUciLine("info string hash " + std::to_string(board.zobristKey));
+        }
+        else if (token == "see") {
+            stopAndJoinSearch();
+            std::string moveStr;
+            if (iss >> moveStr) {
+                Move m = uciToMove(moveStr, board);
+                if (m.from >= 0) {
+                    bool res = board.see(m.from, m.to, m.piece, m.capture, 0);
+                    printUciLine(std::string("info string see ") + (res ? ">= 0" : "< 0"));
+                }
             }
         }
         else if (token == "quit") {
+            stopAndJoinSearch();
             break;
         }
     }
+
+    stopAndJoinSearch();
 }

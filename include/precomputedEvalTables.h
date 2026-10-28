@@ -2,6 +2,7 @@
 #include<cstdint>
 
 extern const int pawnPST[64];
+extern const int pawnEgPST[64];
 extern const int knightPST[64];
 extern const int bishopPST[64];
 extern const int rookPST[64];

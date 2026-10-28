@@ -1,0 +1,4 @@
+id,category,fen,sf_reference_move
+reference_v14_after_2_b6,opening,"rnbqkbnr/p1pp1ppp/1p2p3/8/4P3/2N5/PPPP1PPP/R1BQKBNR w KQkq - 0 3",d2d4
+reference_v14_after_12_Re8,tactics,"r2qr1k1/pbpp1p1p/1pn3p1/3pP3/3P4/3B3Q/PPP1NPPP/R4RK1 w - - 2 13",f2f4
+reference_v14_after_24_Qa2,conversion,"3rr3/1bp2pk1/p1n3pp/1p2P3/3p1P2/P2B2N1/qPPQ2PP/4RRK1 w - - 2 25",f4f5

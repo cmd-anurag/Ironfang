@@ -2,7 +2,7 @@
 #define TYPES_H
 
 
-// Piece % 8 = Base Piece Type (1 = Pawn, 2 = Rook, 3 = Knight, 4 = Bishop, 5 = Queen, 6 = King)
+// Piece % 8 = Base Piece Type (1 = Pawn, 2 = Knight, 3 = Bishop, 4 = Rook, 5 = Queen, 6 = King)
 enum Piece {
     NONE,
     WP = 1, WN, WB, WR, WQ, WK,

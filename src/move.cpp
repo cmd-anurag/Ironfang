@@ -1,5 +1,4 @@
 #include "move.h"
-#include "board.h"
 #include "bitboard.h"
 #include "types.h"
 #include <string>
@@ -55,6 +54,8 @@ std::string moveToAlgrebraic(Move move) {
 }
 
 std::string moveToUCI(Move move) {
+    if (move.from < 0 || move.from >= 64 || move.to < 0 || move.to >= 64)
+        return "0000";
     std::string result;
     
    
@@ -88,6 +89,11 @@ std::string moveToUCI(Move move) {
 }
 
 Move uciToMove(const std::string& uci, BitBoard &board) {
+    if (uci.size() != 4 && uci.size() != 5)
+        return Move{NONE, -1, -1};
+    if (uci[0] < 'a' || uci[0] > 'h' || uci[2] < 'a' || uci[2] > 'h' ||
+        uci[1] < '1' || uci[1] > '8' || uci[3] < '1' || uci[3] > '8')
+        return Move{NONE, -1, -1};
     std::vector<Move> moves = board.generateMoves();
 
     int fromFile = uci[0] - 'a';

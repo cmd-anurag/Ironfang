@@ -76,6 +76,7 @@ BitBoard::BitBoard() {
 }
 
 void BitBoard::setStartPosition() {
+    hasCachedInCheck = false;
     // Clear all bitboards
     whitePawns = blackPawns = 0;
     whiteRooks = blackRooks = 0;
@@ -99,11 +100,33 @@ void BitBoard::setStartPosition() {
     blackKing = 0x0000000000000010ULL;     // e8
     blackPawns = 0x000000000000FF00ULL;    // rank 7
 
+    squareContents.fill(NONE);
+    const auto cachePieces = [this](uint64_t pieces, Piece piece) {
+        while (pieces) squareContents[popLSB(pieces)] = piece;
+    };
+    cachePieces(whitePawns, WP);
+    cachePieces(blackPawns, BP);
+    cachePieces(whiteRooks, WR);
+    cachePieces(blackRooks, BR);
+    cachePieces(whiteBishops, WB);
+    cachePieces(blackBishops, BB);
+    cachePieces(whiteQueens, WQ);
+    cachePieces(blackQueens, BQ);
+    cachePieces(whiteKnights, WN);
+    cachePieces(blackKnights, BN);
+    cachePieces(whiteKing, WK);
+    cachePieces(blackKing, BK);
+
     sideToMove = WHITE;
+    enPassantSquare = -1;
+    halfmoveClock = 0;
+    pathDepth = 0;
     whiteKingsideCastle = true;
     whiteQueensideCastle = true;
     blackKingsideCastle = true;
     blackQueensideCastle = true;
+    whiteHasCastled = false;
+    blackHasCastled = false;
 
     whiteKingSquare = 60; // e1
     blackKingSquare = 4;  // e8
@@ -140,7 +163,10 @@ uint64_t BitBoard::getPawnAttacks(int square, Color color) const {
 }
 
 bool BitBoard::isSquareAttacked(int square, Color opponentColor) const {
-    uint64_t occupied = getAllPieces();
+    return isSquareAttacked(square, opponentColor, getAllPieces());
+}
+
+bool BitBoard::isSquareAttacked(int square, Color opponentColor, uint64_t occupied) const {
     
     // Check pawn attacks
     uint64_t opponentPawns = (opponentColor == WHITE) ? whitePawns : blackPawns;
@@ -165,8 +191,114 @@ bool BitBoard::isSquareAttacked(int square, Color opponentColor) const {
     return false;
 }
 
+uint64_t BitBoard::getAttackersTo(int square, uint64_t occupied) const {
+    return (getPawnAttacks(square, BLACK) & whitePawns)
+         | (getPawnAttacks(square, WHITE) & blackPawns)
+         | (getKnightAttacks(square) & (whiteKnights | blackKnights))
+         | (getBishopAttacks(square, occupied) & (whiteBishops | blackBishops | whiteQueens | blackQueens))
+         | (getRookAttacks(square, occupied) & (whiteRooks | blackRooks | whiteQueens | blackQueens))
+         | (getKingAttacks(square) & (whiteKing | blackKing));
+}
+
+bool BitBoard::see(int from, int to, int movingPiece, int capturedPiece, int threshold) const {
+    constexpr int seeValues[8] = {0, 100, 300, 320, 500, 900, 20000, 0};
+
+    int swap = seeValues[capturedPiece & 7] - threshold;
+    if (swap < 0) {
+        return false;
+    }
+
+    swap = seeValues[movingPiece & 7] - swap;
+    if (swap <= 0) {
+        return true;
+    }
+
+    uint64_t occupied = getAllPieces() ^ (1ULL << from);
+    if (capturedPiece != NONE && squareContents[to] == NONE) {
+        // En passant capture: remove the captured pawn from its adjacent square
+        const int epPawnSquare = (movingPiece == WP) ? to + 8 : to - 8;
+        occupied ^= (1ULL << epPawnSquare);
+    }
+    occupied &= ~(1ULL << to);
+
+    Color stm = static_cast<Color>(1 - getPieceColor(static_cast<Piece>(movingPiece)));
+    uint64_t attackers = getAttackersTo(to, occupied);
+    int res = 1;
+
+    const uint64_t diagSliders = whiteBishops | blackBishops | whiteQueens | blackQueens;
+    const uint64_t orthSliders = whiteRooks | blackRooks | whiteQueens | blackQueens;
+
+    while (true) {
+        attackers &= occupied;
+        const uint64_t stmAttackers = attackers & (stm == WHITE ? getWhitePieces() : getBlackPieces());
+
+        if (!stmAttackers) {
+            break;
+        }
+
+        res ^= 1;
+
+        uint64_t bb;
+        if ((bb = stmAttackers & (stm == WHITE ? whitePawns : blackPawns))) {
+            if ((swap = seeValues[PT_PAWN] - swap) < res) break;
+            const int sq = __builtin_ctzll(bb);
+            occupied ^= (1ULL << sq);
+            attackers |= (getBishopAttacks(to, occupied) & diagSliders);
+        }
+        else if ((bb = stmAttackers & (stm == WHITE ? whiteKnights : blackKnights))) {
+            if ((swap = seeValues[PT_KNIGHT] - swap) < res) break;
+            const int sq = __builtin_ctzll(bb);
+            occupied ^= (1ULL << sq);
+        }
+        else if ((bb = stmAttackers & (stm == WHITE ? whiteBishops : blackBishops))) {
+            if ((swap = seeValues[PT_BISHOP] - swap) < res) break;
+            const int sq = __builtin_ctzll(bb);
+            occupied ^= (1ULL << sq);
+            attackers |= (getBishopAttacks(to, occupied) & diagSliders);
+        }
+        else if ((bb = stmAttackers & (stm == WHITE ? whiteRooks : blackRooks))) {
+            if ((swap = seeValues[PT_ROOK] - swap) < res) break;
+            const int sq = __builtin_ctzll(bb);
+            occupied ^= (1ULL << sq);
+            attackers |= (getRookAttacks(to, occupied) & orthSliders);
+        }
+        else if ((bb = stmAttackers & (stm == WHITE ? whiteQueens : blackQueens))) {
+            if ((swap = seeValues[PT_QUEEN] - swap) < res) break;
+            const int sq = __builtin_ctzll(bb);
+            occupied ^= (1ULL << sq);
+            attackers |= (getBishopAttacks(to, occupied) & diagSliders)
+                       | (getRookAttacks(to, occupied) & orthSliders);
+        }
+        else { // King
+            const Color otherSide = static_cast<Color>(1 - stm);
+            const uint64_t otherSideAttackers = attackers & (otherSide == WHITE ? getWhitePieces() : getBlackPieces());
+            return otherSideAttackers ? (res ^ 1) : res;
+        }
+
+        stm = static_cast<Color>(1 - stm);
+    }
+
+    return bool(res);
+}
+
+bool BitBoard::isInCheck() const {
+    if (!hasCachedInCheck) {
+        const int kingSquare = sideToMove == WHITE ? whiteKingSquare : blackKingSquare;
+        const Color opponent = sideToMove == WHITE ? BLACK : WHITE;
+        cachedInCheck = isSquareAttacked(kingSquare, opponent);
+        hasCachedInCheck = true;
+    }
+    return cachedInCheck;
+}
+
 std::vector<Move> BitBoard::generateMoves() const {
     std::vector<Move> moves;
+    generateMoves(moves);
+    return moves;
+}
+
+void BitBoard::generateMoves(std::vector<Move>& moves) const {
+    moves.clear();
     moves.reserve(218);
     
     uint64_t pieces = (sideToMove == WHITE) ? getWhitePieces() : getBlackPieces();
@@ -199,12 +331,18 @@ std::vector<Move> BitBoard::generateMoves() const {
         }
     }
     
-    return moves;
 }
 
 std::vector<Move> BitBoard::generateCaptures() const
 {
     std::vector<Move> captures;
+    generateCaptures(captures);
+    return captures;
+}
+
+void BitBoard::generateCaptures(std::vector<Move>& captures) const
+{
+    captures.clear();
     captures.reserve(36);
 
     Color color = sideToMove;
@@ -221,6 +359,20 @@ std::vector<Move> BitBoard::generateCaptures() const
             case WP: case BP: {
                 // Pawn captures (including promotions and en passant)
                 int promotionRank = (color == WHITE) ? 0 : 7;
+                int forward = color == WHITE ? -8 : 8;
+                int forwardSquare = square + forward;
+                if (forwardSquare >= 0 && forwardSquare < 64 &&
+                    forwardSquare / 8 == promotionRank &&
+                    !(occupied & (1ULL << forwardSquare))) {
+                    Piece queen = color == WHITE ? WQ : BQ;
+                    Piece rook = color == WHITE ? WR : BR;
+                    Piece bishop = color == WHITE ? WB : BB;
+                    Piece knight = color == WHITE ? WN : BN;
+                    captures.push_back(Move(piece, square, forwardSquare, queen));
+                    captures.push_back(Move(piece, square, forwardSquare, rook));
+                    captures.push_back(Move(piece, square, forwardSquare, bishop));
+                    captures.push_back(Move(piece, square, forwardSquare, knight));
+                }
                 
                 // Regular pawn captures
                 uint64_t attacks = getPawnAttacks(square, color) & enemies;
@@ -309,7 +461,6 @@ std::vector<Move> BitBoard::generateCaptures() const
                 break;
         }
     }
-    return captures;
 }
 
 void BitBoard::generatePawnMoves(int square, std::vector<Move>& moves, Piece p, Color color) const {
@@ -457,34 +608,46 @@ void BitBoard::generateKingMoves(int square, std::vector<Move>& moves, Piece p, 
     // Castling moves
     if (color == WHITE) {
         // White kingside castling
-        if (whiteKingsideCastle && square == 60) {
+        if (whiteKingsideCastle && square == 60 && getPiece(63) == WR) {
             if (!(getAllPieces() & 0x6000000000000000ULL)) { // f1 and g1 empty
-                if (!isSquareAttacked(60, BLACK) && !isSquareAttacked(61, BLACK) && !isSquareAttacked(62, BLACK)) {
+                uint64_t occupancyWithoutKing = getAllPieces() & ~(1ULL << square);
+                if (!isSquareAttacked(60, BLACK, occupancyWithoutKing) &&
+                    !isSquareAttacked(61, BLACK, occupancyWithoutKing) &&
+                    !isSquareAttacked(62, BLACK, occupancyWithoutKing)) {
                     moves.push_back(Move(p, square, 62, 0, 0, true, false, false));
                 }
             }
         }
         // White queenside castling
-        if (whiteQueensideCastle && square == 60) {
+        if (whiteQueensideCastle && square == 60 && getPiece(56) == WR) {
             if (!(getAllPieces() & 0x0E00000000000000ULL)) { // b1, c1, d1 empty
-                if (!isSquareAttacked(60, BLACK) && !isSquareAttacked(59, BLACK) && !isSquareAttacked(58, BLACK)) {
+                uint64_t occupancyWithoutKing = getAllPieces() & ~(1ULL << square);
+                if (!isSquareAttacked(60, BLACK, occupancyWithoutKing) &&
+                    !isSquareAttacked(59, BLACK, occupancyWithoutKing) &&
+                    !isSquareAttacked(58, BLACK, occupancyWithoutKing)) {
                     moves.push_back(Move(p, square, 58, 0, 0, false, true, false));
                 }
             }
         }
     } else {
         // Black kingside castling
-        if (blackKingsideCastle && square == 4) {
+        if (blackKingsideCastle && square == 4 && getPiece(7) == BR) {
             if (!(getAllPieces() & 0x0000000000000060ULL)) { // f8 and g8 empty
-                if (!isSquareAttacked(4, WHITE) && !isSquareAttacked(5, WHITE) && !isSquareAttacked(6, WHITE)) {
+                uint64_t occupancyWithoutKing = getAllPieces() & ~(1ULL << square);
+                if (!isSquareAttacked(4, WHITE, occupancyWithoutKing) &&
+                    !isSquareAttacked(5, WHITE, occupancyWithoutKing) &&
+                    !isSquareAttacked(6, WHITE, occupancyWithoutKing)) {
                     moves.push_back(Move(p, square, 6, 0, 0, true, false, false));
                 }
             }
         }
         // Black queenside castling
-        if (blackQueensideCastle && square == 4) {
+        if (blackQueensideCastle && square == 4 && getPiece(0) == BR) {
             if (!(getAllPieces() & 0x000000000000000EULL)) { // b8, c8, d8 empty
-                if (!isSquareAttacked(4, WHITE) && !isSquareAttacked(3, WHITE) && !isSquareAttacked(2, WHITE)) {
+                uint64_t occupancyWithoutKing = getAllPieces() & ~(1ULL << square);
+                if (!isSquareAttacked(4, WHITE, occupancyWithoutKing) &&
+                    !isSquareAttacked(3, WHITE, occupancyWithoutKing) &&
+                    !isSquareAttacked(2, WHITE, occupancyWithoutKing)) {
                     moves.push_back(Move(p, square, 2, 0, 0, false, true, false));
                 }
             }
@@ -492,7 +655,225 @@ void BitBoard::generateKingMoves(int square, std::vector<Move>& moves, Piece p, 
     }
 }
 
+namespace {
+uint16_t encodeCompactMove(const Move& move) {
+    int flag = COMPACT_MOVE_NORMAL;
+    if (move.isEnPassant) flag = COMPACT_MOVE_EN_PASSANT;
+    else if (move.isKingSideCastle || move.isQueenSideCastle)
+        flag = COMPACT_MOVE_CASTLE;
+    else if (move.promotion) {
+        switch (move.promotion & 7) {
+            case 5: flag = COMPACT_MOVE_PROMOTE_QUEEN; break;
+            case 2: flag = COMPACT_MOVE_PROMOTE_KNIGHT; break;
+            case 4: flag = COMPACT_MOVE_PROMOTE_ROOK; break;
+            case 3: flag = COMPACT_MOVE_PROMOTE_BISHOP; break;
+        }
+    } else if ((move.piece & 7) == 1 && std::abs(move.to - move.from) == 16) {
+        flag = COMPACT_MOVE_PAWN_DOUBLE_PUSH;
+    }
+    return static_cast<uint16_t>(move.from | (move.to << 6) | (flag << 12));
+}
+}
+
 bool BitBoard::makeMove(const Move &move) {
+    const Gamestate prevState = {
+        sideToMove, enPassantSquare,
+        whiteKingsideCastle, whiteQueensideCastle,
+        blackKingsideCastle, blackQueensideCastle,
+        whiteKingSquare, blackKingSquare, zobristKey, halfmoveClock,
+        whiteHasCastled, blackHasCastled
+    };
+    Piece capturedPiece = NONE;
+    const uint16_t encodedMove = encodeCompactMove(move);
+    makeSearchMove(encodedMove, capturedPiece);
+    const bool legal = sideToMove == BLACK
+        ? !isSquareAttacked(whiteKingSquare, BLACK)
+        : !isSquareAttacked(blackKingSquare, WHITE);
+    if (!legal) unmakeSearchMove(encodedMove, prevState, capturedPiece);
+    return legal;
+}
+
+void BitBoard::makeLegalMove(const Move &move) {
+    Piece capturedPiece = NONE;
+    makeSearchMove(encodeCompactMove(move), capturedPiece);
+}
+
+void BitBoard::makeSearchMove(uint16_t encodedMove, Piece& capturedPiece) {
+    const int from = encodedMove & 0x3f;
+    const int to = (encodedMove >> 6) & 0x3f;
+    const int flag = encodedMove >> 12;
+    const Piece piece = getPiece(from);
+    const Color mover = sideToMove;
+    const bool white = mover == WHITE;
+    const bool isCastle = flag == COMPACT_MOVE_CASTLE;
+    const bool isEnPassant = flag == COMPACT_MOVE_EN_PASSANT;
+    const bool isPromotion = flag >= COMPACT_MOVE_PROMOTE_QUEEN;
+    const bool isDoublePush = flag == COMPACT_MOVE_PAWN_DOUBLE_PUSH;
+    const bool kingSide = isCastle && to > from;
+    const int captureSquare = isEnPassant ? to + (white ? 8 : -8) : to;
+    capturedPiece = isEnPassant ? (white ? BP : WP) : getPiece(to);
+
+    const int oldCastling = castlingRightsIndex(
+        whiteKingsideCastle, whiteQueensideCastle,
+        blackKingsideCastle, blackQueensideCastle);
+    if (enPassantSquare != -1) {
+        zobristKey ^= zobristEnPassant[(enPassantSquare & 7) + 1];
+        enPassantSquare = -1;
+    }
+    xorPiece(zobristKey, piece, from);
+    clearSquare(from);
+
+    if (capturedPiece != NONE) {
+        xorPiece(zobristKey, capturedPiece, captureSquare);
+        clearSquare(captureSquare);
+    }
+
+    Piece placedPiece = piece;
+    if (isPromotion) {
+        placedPiece = flag == COMPACT_MOVE_PROMOTE_QUEEN ? (white ? WQ : BQ)
+            : flag == COMPACT_MOVE_PROMOTE_KNIGHT ? (white ? WN : BN)
+            : flag == COMPACT_MOVE_PROMOTE_ROOK ? (white ? WR : BR)
+            : (white ? WB : BB);
+    }
+    if (isCastle) {
+        const int rookFrom = white ? (kingSide ? 63 : 56) : (kingSide ? 7 : 0);
+        const int rookTo = white ? (kingSide ? 61 : 59) : (kingSide ? 5 : 3);
+        const Piece rook = white ? WR : BR;
+        xorPiece(zobristKey, piece, to);
+        xorPiece(zobristKey, rook, rookFrom);
+        xorPiece(zobristKey, rook, rookTo);
+        clearSquare(rookFrom);
+        setPiece(placedPiece, to);
+        setPiece(rook, rookTo);
+        if (white) whiteHasCastled = true;
+        else blackHasCastled = true;
+    } else {
+        xorPiece(zobristKey, placedPiece, to);
+        setPiece(placedPiece, to);
+    }
+
+    if (isDoublePush) {
+        enPassantSquare = from + (sideToMove == WHITE ? -8 : 8);
+        zobristKey ^= zobristEnPassant[(enPassantSquare & 7) + 1];
+    }
+
+    if (piece == WK) {
+        whiteKingSquare = to;
+        whiteKingsideCastle = false;
+        whiteQueensideCastle = false;
+    } else if (piece == BK) {
+        blackKingSquare = to;
+        blackKingsideCastle = false;
+        blackQueensideCastle = false;
+    } else if (piece == WR) {
+        if (from == 56) whiteQueensideCastle = false;
+        if (from == 63) whiteKingsideCastle = false;
+    } else if (piece == BR) {
+        if (from == 0) blackQueensideCastle = false;
+        if (from == 7) blackKingsideCastle = false;
+    }
+    if (capturedPiece != NONE) {
+        if (captureSquare == 56) whiteQueensideCastle = false;
+        if (captureSquare == 63) whiteKingsideCastle = false;
+        if (captureSquare == 0) blackQueensideCastle = false;
+        if (captureSquare == 7) blackKingsideCastle = false;
+    }
+
+    const int currentCastling = castlingRightsIndex(
+        whiteKingsideCastle, whiteQueensideCastle,
+        blackKingsideCastle, blackQueensideCastle);
+    if (oldCastling != currentCastling) {
+        zobristKey ^= zobristCastling[oldCastling];
+        zobristKey ^= zobristCastling[currentCastling];
+    }
+
+    sideToMove = sideToMove == WHITE ? BLACK : WHITE;
+    zobristKey ^= zobristBlackToMove;
+    halfmoveClock = (piece == WP || piece == BP || capturedPiece != NONE)
+        ? 0 : halfmoveClock + 1;
+    hasCachedInCheck = false;
+}
+
+void BitBoard::unmakeSearchMove(uint16_t encodedMove, const Gamestate& prevState,
+                                Piece capturedPiece) {
+    const int from = encodedMove & 0x3f;
+    const int to = (encodedMove >> 6) & 0x3f;
+    const int flag = encodedMove >> 12;
+    const Color mover = prevState.sideToMove;
+    const Piece pawn = mover == WHITE ? WP : BP;
+    const Piece king = mover == WHITE ? WK : BK;
+    const Piece rook = mover == WHITE ? WR : BR;
+
+    if (flag == COMPACT_MOVE_CASTLE) {
+        const bool kingSide = to > from;
+        const int rookFrom = mover == WHITE
+            ? (kingSide ? 63 : 56) : (kingSide ? 7 : 0);
+        const int rookTo = mover == WHITE
+            ? (kingSide ? 61 : 59) : (kingSide ? 5 : 3);
+        clearSquare(to);
+        clearSquare(rookTo);
+        setPiece(king, from);
+        setPiece(rook, rookFrom);
+    } else if (flag == COMPACT_MOVE_EN_PASSANT) {
+        const int capturedSquare = to + (mover == WHITE ? 8 : -8);
+        clearSquare(to);
+        setPiece(pawn, from);
+        setPiece(capturedPiece, capturedSquare);
+    } else {
+        const Piece movedPiece = flag >= COMPACT_MOVE_PROMOTE_QUEEN
+            ? pawn : getPiece(to);
+        clearSquare(to);
+        setPiece(movedPiece, from);
+        if (capturedPiece != NONE) setPiece(capturedPiece, to);
+    }
+
+    whiteKingsideCastle = prevState.whiteKingsideCastle;
+    whiteQueensideCastle = prevState.whiteQueensideCastle;
+    blackKingsideCastle = prevState.blackKingsideCastle;
+    blackQueensideCastle = prevState.blackQueensideCastle;
+    whiteHasCastled = prevState.whiteHasCastled;
+    blackHasCastled = prevState.blackHasCastled;
+    whiteKingSquare = prevState.whiteKingSquare;
+    blackKingSquare = prevState.blackKingSquare;
+    enPassantSquare = prevState.enPassantSquare;
+    halfmoveClock = prevState.halfmoveClock;
+    sideToMove = prevState.sideToMove;
+    zobristKey = prevState.zobristKey;
+    hasCachedInCheck = false;
+}
+
+void BitBoard::makeNullMove(Gamestate& prevState) {
+    prevState.sideToMove = sideToMove;
+    prevState.enPassantSquare = enPassantSquare;
+    prevState.whiteKingsideCastle = whiteKingsideCastle;
+    prevState.whiteQueensideCastle = whiteQueensideCastle;
+    prevState.blackKingsideCastle = blackKingsideCastle;
+    prevState.blackQueensideCastle = blackQueensideCastle;
+    prevState.whiteKingSquare = whiteKingSquare;
+    prevState.blackKingSquare = blackKingSquare;
+    prevState.zobristKey = zobristKey;
+    prevState.halfmoveClock = halfmoveClock;
+
+    if (enPassantSquare != -1) {
+        zobristKey ^= zobristEnPassant[(enPassantSquare & 7) + 1];
+        enPassantSquare = -1;
+    }
+    sideToMove = sideToMove == WHITE ? BLACK : WHITE;
+    zobristKey ^= zobristBlackToMove;
+    ++halfmoveClock;
+    hasCachedInCheck = false;
+}
+
+void BitBoard::unmakeNullMove(const Gamestate& prevState) {
+    sideToMove = prevState.sideToMove;
+    enPassantSquare = prevState.enPassantSquare;
+    zobristKey = prevState.zobristKey;
+    halfmoveClock = prevState.halfmoveClock;
+    hasCachedInCheck = false;
+}
+
+#if 0
+bool BitBoard::applyMove(const Move &move, bool validateKingSafety) {
     Gamestate prevState = {
         sideToMove, 
         enPassantSquare,
@@ -502,11 +883,12 @@ bool BitBoard::makeMove(const Move &move) {
         blackQueensideCastle,
         whiteKingSquare,
         blackKingSquare,
-        zobristKey
+        zobristKey,
+        halfmoveClock
     };
 
     if(enPassantSquare != -1) {
-        int file = enPassantSquare & 7;
+        int file = (enPassantSquare & 7) + 1;
         zobristKey ^= zobristEnPassant[file];
     }
     enPassantSquare = -1;
@@ -521,6 +903,7 @@ bool BitBoard::makeMove(const Move &move) {
             whiteKingSquare = 62;
             whiteKingsideCastle = false;
             whiteQueensideCastle = false;
+            whiteHasCastled = true;
 
             // Zobrist changes
             xorPiece(zobristKey, WK, 60);
@@ -536,6 +919,7 @@ bool BitBoard::makeMove(const Move &move) {
             blackKingSquare = 6;
             blackKingsideCastle = false;
             blackQueensideCastle = false;
+            blackHasCastled = true;
 
             // Zobrist changes
             xorPiece(zobristKey, BK, 4);
@@ -553,6 +937,7 @@ bool BitBoard::makeMove(const Move &move) {
             whiteKingSquare = 58;
             whiteKingsideCastle = false;
             whiteQueensideCastle = false;
+            whiteHasCastled = true;
 
             // Zobrist Changes
             xorPiece(zobristKey, WK, 60);
@@ -568,6 +953,7 @@ bool BitBoard::makeMove(const Move &move) {
             blackKingSquare = 2;
             blackKingsideCastle = false;
             blackQueensideCastle = false;
+            blackHasCastled = true;
 
             // Zobrist Changes
             xorPiece(zobristKey, BK, 4);
@@ -595,7 +981,7 @@ bool BitBoard::makeMove(const Move &move) {
             if(abs(move.from - move.to) == 16) {
                 enPassantSquare = move.from + (sideToMove == WHITE? -8 : 8);
                 // zobrist changes
-                int file = enPassantSquare & 7;
+                int file = (enPassantSquare & 7) + 1;
                 zobristKey ^= zobristEnPassant[file];
             }
 
@@ -660,40 +1046,58 @@ bool BitBoard::makeMove(const Move &move) {
         }
     }
 
-    // zobrist changes
-    if(prevState.whiteKingsideCastle != whiteKingsideCastle) zobristKey ^= zobristCastling[0];
-    if(prevState.whiteQueensideCastle != whiteQueensideCastle) zobristKey ^= zobristCastling[1];
-    if(prevState.blackKingsideCastle != blackKingsideCastle) zobristKey ^= zobristCastling[2];
-    if(prevState.blackQueensideCastle != blackQueensideCastle) zobristKey ^= zobristCastling[3];
+    // The reference hashes the complete castling-rights state with one key.
+    const int previousCastling = castlingRightsIndex(
+        prevState.whiteKingsideCastle, prevState.whiteQueensideCastle,
+        prevState.blackKingsideCastle, prevState.blackQueensideCastle);
+    const int currentCastling = castlingRightsIndex(
+        whiteKingsideCastle, whiteQueensideCastle,
+        blackKingsideCastle, blackQueensideCastle);
+    if (previousCastling != currentCastling) {
+        zobristKey ^= zobristCastling[previousCastling];
+        zobristKey ^= zobristCastling[currentCastling];
+    }
 
     sideToMove = (sideToMove == WHITE)? BLACK : WHITE;
     zobristKey ^= zobristBlackToMove;
+    hasCachedInCheck = false;
 
 
-    if(sideToMove == BLACK) {
-        if(isSquareAttacked(whiteKingSquare, BLACK)){
-            unmakeMove(move, prevState);
-            return false;
+    if (validateKingSafety) {
+        if (sideToMove == BLACK) {
+            if (isSquareAttacked(whiteKingSquare, BLACK)) {
+                unmakeMove(move, prevState);
+                return false;
+            }
+        } else {
+            if (isSquareAttacked(blackKingSquare, WHITE)) {
+                unmakeMove(move, prevState);
+                return false;
+            }
         }
     }
-    else {
-        if(isSquareAttacked(blackKingSquare, WHITE)) {
-            unmakeMove(move, prevState);
-            return false;
-        }
-    } 
+
+    if (move.piece == WP || move.piece == BP || move.capture || move.isEnPassant) {
+        halfmoveClock = 0;
+    } else {
+        ++halfmoveClock;
+    }
 
     return true;
 }
+#endif
 
 void BitBoard::unmakeMove(const Move &move, const Gamestate &prevState) {
     whiteKingsideCastle = prevState.whiteKingsideCastle;
     whiteQueensideCastle = prevState.whiteQueensideCastle;
     blackKingsideCastle = prevState.blackKingsideCastle;
     blackQueensideCastle = prevState.blackQueensideCastle;
+    whiteHasCastled = prevState.whiteHasCastled;
+    blackHasCastled = prevState.blackHasCastled;
     whiteKingSquare = prevState.whiteKingSquare;
     blackKingSquare = prevState.blackKingSquare;
     enPassantSquare = prevState.enPassantSquare;
+    halfmoveClock = prevState.halfmoveClock;
     sideToMove = (sideToMove == WHITE) ? BLACK : WHITE;
 
     if (move.isKingSideCastle) {
@@ -747,6 +1151,7 @@ void BitBoard::unmakeMove(const Move &move, const Gamestate &prevState) {
     
         
     zobristKey = prevState.zobristKey;
+    hasCachedInCheck = false;
 }
 
 bool BitBoard::tryMove(const Move& move) {
@@ -759,7 +1164,8 @@ bool BitBoard::tryMove(const Move& move) {
         blackQueensideCastle,
         whiteKingSquare,
         blackKingSquare,
-        zobristKey
+        zobristKey,
+        halfmoveClock
     };
 
     if(!makeMove(move)) return false;
@@ -781,75 +1187,90 @@ void BitBoard::print() const {
 }
 
 bool BitBoard::setPositionFromFEN(const std::string& fen) {
-    // Clear all bitboards
-    whitePawns = blackPawns = 0;
-    whiteRooks = blackRooks = 0;
-    whiteBishops = blackBishops = 0;
-    whiteQueens = blackQueens = 0;
-    whiteKnights = blackKnights = 0;
-    whiteKing = blackKing = 0;
-    
+    BitBoard original = *this;
+    auto fail = [this, &original]() { *this = original; return false; };
     std::istringstream ss(fen);
-    std::string token;
-    
-    // 1. Piece placement
-    if (!(ss >> token)) return false;
-    
-    int square = 0;
-    for (char c : token) {
+    std::string placement, active, castling, ep;
+    if (!(ss >> placement >> active >> castling >> ep)) return fail();
+    if (active != "w" && active != "b") return fail();
+
+    whitePawns = blackPawns = whiteRooks = blackRooks = 0;
+    whiteBishops = blackBishops = whiteQueens = blackQueens = 0;
+    whiteKnights = blackKnights = whiteKing = blackKing = 0;
+    squareContents.fill(NONE);
+    int rank = 0, file = 0, whiteKings = 0, blackKings = 0;
+    for (char c : placement) {
         if (c == '/') {
+            if (file != 8 || rank >= 7) return fail();
+            ++rank;
+            file = 0;
             continue;
-        } else if (isdigit(c)) {
-            square += (c - '0');
-        } else {
-            Piece p = NONE;
+        }
+        if (c >= '1' && c <= '8') {
+            file += c - '0';
+            if (file > 8) return fail();
+            continue;
+        }
+        Piece piece;
+        switch (c) {
+            case 'P': piece = WP; break; case 'N': piece = WN; break;
+            case 'B': piece = WB; break; case 'R': piece = WR; break;
+            case 'Q': piece = WQ; break; case 'K': piece = WK; break;
+            case 'p': piece = BP; break; case 'n': piece = BN; break;
+            case 'b': piece = BB; break; case 'r': piece = BR; break;
+            case 'q': piece = BQ; break; case 'k': piece = BK; break;
+            default: return fail();
+        }
+        if (file >= 8) return fail();
+        int square = rank * 8 + file++;
+        setPiece(piece, square);
+        if (piece == WK) { whiteKingSquare = square; ++whiteKings; }
+        if (piece == BK) { blackKingSquare = square; ++blackKings; }
+    }
+    if (rank != 7 || file != 8 || whiteKings != 1 || blackKings != 1) return fail();
+
+    sideToMove = active == "w" ? WHITE : BLACK;
+    whiteKingsideCastle = whiteQueensideCastle = false;
+    blackKingsideCastle = blackQueensideCastle = false;
+    if (castling != "-") {
+        for (char c : castling) {
             switch (c) {
-                case 'P': p = WP; break;
-                case 'N': p = WN; break;
-                case 'B': p = WB; break;
-                case 'R': p = WR; break;
-                case 'Q': p = WQ; break;
-                case 'K': p = WK; break;
-                case 'p': p = BP; break;
-                case 'n': p = BN; break;
-                case 'b': p = BB; break;
-                case 'r': p = BR; break;
-                case 'q': p = BQ; break;
-                case 'k': p = BK; break;
-                default: return false;
-            }
-            
-            if (p != NONE) {
-                setPiece(p, square);
-                
-                if (p == WK) whiteKingSquare = square;
-                if (p == BK) blackKingSquare = square;
-                
-                square++;
+                case 'K': if (whiteKingsideCastle) return fail(); whiteKingsideCastle = true; break;
+                case 'Q': if (whiteQueensideCastle) return fail(); whiteQueensideCastle = true; break;
+                case 'k': if (blackKingsideCastle) return fail(); blackKingsideCastle = true; break;
+                case 'q': if (blackQueensideCastle) return fail(); blackQueensideCastle = true; break;
+                default: return fail();
             }
         }
     }
-    
-    // 2. Active color
-    if (!(ss >> token)) return false;
-    sideToMove = (token == "w") ? WHITE : BLACK;
-    
-    // 3. Castling availability
-    if (!(ss >> token)) return false;
-    whiteKingsideCastle = (token.find('K') != std::string::npos);
-    whiteQueensideCastle = (token.find('Q') != std::string::npos);
-    blackKingsideCastle = (token.find('k') != std::string::npos);
-    blackQueensideCastle = (token.find('q') != std::string::npos);
-    
-    // 4. En passant target square
-    if (!(ss >> token)) return false;
-    if (token == "-") {
-        enPassantSquare = -1;
-    } else {
-        int file = token[0] - 'a';
-        int rank = 8 - (token[1] - '0');
-        enPassantSquare = rank * 8 + file;
+    whiteHasCastled = (!whiteKingsideCastle && !whiteQueensideCastle &&
+                      (whiteKingSquare == 62 || whiteKingSquare == 58 || whiteKingSquare == 57));
+    blackHasCastled = (!blackKingsideCastle && !blackQueensideCastle &&
+                      (blackKingSquare == 6 || blackKingSquare == 2 || blackKingSquare == 1));
+    enPassantSquare = -1;
+    if (ep != "-") {
+        if (ep.size() != 2 || ep[0] < 'a' || ep[0] > 'h' || ep[1] < '1' || ep[1] > '8') return fail();
+        int epRank = 8 - (ep[1] - '0');
+        if (epRank != 2 && epRank != 5) return fail();
+        enPassantSquare = epRank * 8 + ep[0] - 'a';
     }
-    
+    halfmoveClock = 0;
+    std::string halfmoveToken;
+    if (ss >> halfmoveToken) {
+        size_t parsedLength = 0;
+        int parsedHalfmoveClock = 0;
+        try {
+            parsedHalfmoveClock = std::stoi(halfmoveToken, &parsedLength);
+        } catch (...) {
+            return fail();
+        }
+        if (parsedLength != halfmoveToken.size() || parsedHalfmoveClock < 0) {
+            return fail();
+        }
+        halfmoveClock = parsedHalfmoveClock;
+    }
+    zobristKey = generateZobristHashKey(*this);
+    pathDepth = 0;
+    hasCachedInCheck = false;
     return true;
 }

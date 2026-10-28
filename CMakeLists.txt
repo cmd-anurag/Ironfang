@@ -31,11 +31,37 @@ endif()
 # Include  headers
 include_directories(include)
 
-# Collect all .cpp files from src/
-file(GLOB SOURCES "src/*.cpp")
+# Build the active bitboard engine explicitly. The old mailbox Board sources
+# remain in the repository as legacy code, but are not part of the UCI engine.
+set(SOURCES
+    src/bitboard.cpp
+    src/evaluate.cpp
+    src/main.cpp
+    src/magic.cpp
+    src/move.cpp
+    src/nnue.cpp
+    src/precomputedEvalTables.cpp
+    src/precomputedMagics.cpp
+    src/search.cpp
+    src/timeman.cpp
+    src/tt.cpp
+    src/uci.cpp
+    src/zobrist.cpp
+)
 
 # Build the executable
 add_executable(ironfang ${SOURCES})
+find_package(Threads REQUIRED)
+target_link_libraries(ironfang PRIVATE Threads::Threads)
+
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/resources)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/resources/ironfang.nnue)
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/ironfang.nnue
+        ${CMAKE_CURRENT_BINARY_DIR}/resources/ironfang.nnue
+        COPYONLY
+    )
+endif()
 
 # Optional run target (disable for Android/Windows)
 if(NOT ANDROID AND NOT WINDOWS)
@@ -56,13 +82,17 @@ endif()
 # cmake .. -DCMAKE_BUILD_TYPE=Release
 # cmake --build . --config Release
 
-# Windows x64
+# Windows x64 (If compiling from Linux)
 # mkdir -p build-windows
 # cd build-windows
 # cmake .. \
 #   -DCMAKE_TOOLCHAIN_FILE=../toolchain-windows.cmake \
 #   -DCMAKE_BUILD_TYPE=Release
 # cmake --build . --config Release
+
+# Windows Native (if compiling from Windows)
+# cmake -S . -B build-windows -G Ninja -DCMAKE_BUILD_TYPE=Release
+# cmake --build build-windows
 
 # Android x64
 # mkdir -p build-android

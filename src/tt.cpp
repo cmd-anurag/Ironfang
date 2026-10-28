@@ -1,46 +1,76 @@
 #include "tt.h"
 #include <cstring>
-#include "algorithm"
+#include <algorithm>
+namespace {
+TT_FLAG storedFlag(const TTEntry &entry)
+{
+    return static_cast<TT_FLAG>(entry.flag);
+}
+}
 
 TranspositionTable::TranspositionTable()
 {
     for (size_t i = 0; i < TT_SIZE; ++i)
     table[i] = TTEntry{};
-    // setting all keys to zero indicating empty
-    currentAge = 0;
 }
 
-bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int beta, int &outEval, Move &outMove)
+bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int beta,
+                               int ply, int &outEval, uint16_t &outMove, bool allowCutoff)
+{
+    int ignoredDepth = 0;
+    TT_FLAG ignoredFlag = TT_UPPER;
+    return probe(zobristKey, depth, alpha, beta, ply, outEval, outMove, ignoredDepth, ignoredFlag, allowCutoff);
+}
+
+bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int beta,
+                               int ply, int &outEval, uint16_t &outMove,
+                               int &outDepth, TT_FLAG &outFlag, bool allowCutoff)
 {
     ++lookupCount;
+    outMove = 0;
+    outDepth = 0;
+    outFlag = TT_UPPER;
 
-    size_t index = zobristKey & TT_MASK;
+    size_t index = static_cast<size_t>(zobristKey & TT_MASK);
     TTEntry &entry = table[index];
 
-    // ABSOLUTELY DONT MESS AROUND HERE
-    if (entry.key == zobristKey && entry.age == currentAge) {
+    if (entry.key == zobristKey) {
         ++keyMatchCount;
-        // Always extract the move if it's the correct position
-        outMove = entry.bestMove;
+        outMove = entry.packedMove;
+        outDepth = entry.depth;
+        outFlag = storedFlag(entry);
+
+        // Mate scores are normalized when stored so their distance is
+        // independent of the path that first reached this position.
+        // Restore the current path's score before comparing alpha/beta.
+        int eval = entry.eval;
+        constexpr int mateThreshold = 99000;
+        if (eval > mateThreshold) eval -= ply;
+        else if (eval < -mateThreshold) eval += ply;
+        outEval = eval;
 
         // Check if stored depth is enough
-        if (entry.depth >= depth) {
-            switch(entry.flag) {
+        if (allowCutoff && entry.depth >= depth) {
+            switch(outFlag) {
                 case TT_EXACT:
+                    // The reference uses -1 as both a valid evaluation and
+                    // LookupFailed. Searcher treats an exact -1 result as a
+                    // miss and searches the node again, so preserve that
+                    // behavior for decision parity.
+                    if (eval == -1) return false;
                     ++hitCount;
-                    outEval = entry.eval;
                     return true;
                 case TT_LOWER:
-                    if (entry.eval >= beta) {
+                    if (eval >= beta) {
+                        if (eval == -1) return false;
                         ++hitCount;
-                        outEval = entry.eval;
                         return true;
                     }
                     break;
                 case TT_UPPER:
-                    if (entry.eval <= alpha) {
+                    if (eval <= alpha) {
+                        if (eval == -1) return false;
                         ++hitCount;
-                        outEval = entry.eval;
                         return true;
                     }
                     break;
@@ -53,61 +83,53 @@ bool TranspositionTable::probe(uint64_t zobristKey, int depth, int alpha, int be
 
 
 void TranspositionTable::store(uint64_t zobristKey, int depth, int eval,
-                               TT_FLAG flag, const Move &bestMove)
+                               TT_FLAG flag, uint16_t bestMove)
 {
     ++totalStoreAttempts;
-    size_t index = zobristKey & TT_MASK;
+    size_t index = static_cast<size_t>(zobristKey & TT_MASK);
     TTEntry &entry = table[index];
 
     bool isOverwrite = (entry.key != 0 && entry.key != zobristKey);
 
-    // Prevent quiescence (depth<0) from wiping out real searches
-    if (depth < 0 && entry.depth > 0 && entry.key != zobristKey)
-        return;
-
-    // --- start replacement-policy patch ---
     bool shouldReplace = false;
 
     if (entry.key == 0) {
-        // Empty slot
         shouldReplace = true;
     }
     else if (entry.key == zobristKey) {
-        // Same position: always allow updates for deeper or better moves
         shouldReplace = (depth >= entry.depth);
     }
     else {
-        // Different key: compare old vs new “priority score”
-        int ageDiff = currentAge - entry.age;
+        int ageDiff = (currentAge - entry.age + 64) & 0x3F;
         int oldScore = entry.depth - ageDiff;
-        int newScore = depth;  // fresh entry has no age penalty
+        int newScore = depth;
 
         shouldReplace = (newScore >= oldScore);
     }
-    // --- end replacement-policy patch ---
 
     if (shouldReplace) {
         if (entry.key == 0)       ++entriesOccupied;
         else if (isOverwrite)     ++overwritten;
 
-        entry.key      = zobristKey;
-        entry.depth    = depth;
-        entry.eval     = eval;
-        entry.flag     = flag;
-        entry.bestMove = bestMove;
-        entry.age      = currentAge;
+        entry.key = zobristKey;
+        entry.depth = static_cast<uint8_t>(std::clamp(depth, 0, 255));
+        entry.eval = eval;
+        entry.packedMove = bestMove;
+        entry.flag = static_cast<uint8_t>(flag);
+        entry.age = currentAge & 0x3F;
         ++actualStores;
     }
-    else if (entry.key == zobristKey && bestMove.piece != NONE) {
-        // still update the move if it’s a better move for same position
-        entry.bestMove = bestMove;
+    else if (entry.key == zobristKey && bestMove != 0) {
+        entry.packedMove = bestMove;
     }
 }
 
 
 void TranspositionTable::clear() {
     for (size_t i = 0; i < TT_SIZE; ++i)
-    table[i] = TTEntry{};
+        table[i] = TTEntry{};
+    entriesOccupied = 0;
+    currentAge = 0;
 }
 
 size_t TranspositionTable::countOccupied() const {
