@@ -22,6 +22,7 @@ public:
     static void addPiece(Accumulator& acc, int kingSq, Piece piece, int square, Color side);
     static void removePiece(Accumulator& acc, int kingSq, Piece piece, int square, Color side);
     static void updateMove(Accumulator& acc, const BitBoard& board, uint16_t encodedMove);
+    static void updateMove(const Accumulator& prev, Accumulator& next, const BitBoard& board, uint16_t encodedMove);
 
     // Forward inference pass: returns evaluation in centipawns from the perspective of sideToMove.
     static int evaluate(const BitBoard& board, Accumulator& acc);

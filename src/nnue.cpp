@@ -23,6 +23,135 @@ int32_t outputBias = 0;
 
 bool networkLoaded = false;
 
+static inline void applyPerspectiveUpdate(
+    const int16_t* __restrict prev,
+    int16_t* __restrict next,
+    const int* removed, int numRemoved,
+    const int* added, int numAdded)
+{
+#if defined(__AVX2__)
+    const __m256i* p = reinterpret_cast<const __m256i*>(prev);
+    __m256i* n = reinterpret_cast<__m256i*>(next);
+
+    if (numRemoved == 1 && numAdded == 1) {
+        const __m256i* w_sub = reinterpret_cast<const __m256i*>(featureWeights[removed[0]]);
+        const __m256i* w_add = reinterpret_cast<const __m256i*>(featureWeights[added[0]]);
+
+        for (int i = 0; i < NNUE_HIDDEN / 16; i += 4) {
+            __m256i acc0 = _mm256_load_si256(p + i + 0);
+            __m256i acc1 = _mm256_load_si256(p + i + 1);
+            __m256i acc2 = _mm256_load_si256(p + i + 2);
+            __m256i acc3 = _mm256_load_si256(p + i + 3);
+
+            __m256i s0 = _mm256_load_si256(w_sub + i + 0);
+            __m256i s1 = _mm256_load_si256(w_sub + i + 1);
+            __m256i s2 = _mm256_load_si256(w_sub + i + 2);
+            __m256i s3 = _mm256_load_si256(w_sub + i + 3);
+
+            __m256i a0 = _mm256_load_si256(w_add + i + 0);
+            __m256i a1 = _mm256_load_si256(w_add + i + 1);
+            __m256i a2 = _mm256_load_si256(w_add + i + 2);
+            __m256i a3 = _mm256_load_si256(w_add + i + 3);
+
+            acc0 = _mm256_add_epi16(_mm256_sub_epi16(acc0, s0), a0);
+            acc1 = _mm256_add_epi16(_mm256_sub_epi16(acc1, s1), a1);
+            acc2 = _mm256_add_epi16(_mm256_sub_epi16(acc2, s2), a2);
+            acc3 = _mm256_add_epi16(_mm256_sub_epi16(acc3, s3), a3);
+
+            _mm256_store_si256(n + i + 0, acc0);
+            _mm256_store_si256(n + i + 1, acc1);
+            _mm256_store_si256(n + i + 2, acc2);
+            _mm256_store_si256(n + i + 3, acc3);
+        }
+    } else if (numRemoved == 2 && numAdded == 1) {
+        const __m256i* w_sub0 = reinterpret_cast<const __m256i*>(featureWeights[removed[0]]);
+        const __m256i* w_sub1 = reinterpret_cast<const __m256i*>(featureWeights[removed[1]]);
+        const __m256i* w_add = reinterpret_cast<const __m256i*>(featureWeights[added[0]]);
+
+        for (int i = 0; i < NNUE_HIDDEN / 16; i += 4) {
+            __m256i acc0 = _mm256_load_si256(p + i + 0);
+            __m256i acc1 = _mm256_load_si256(p + i + 1);
+            __m256i acc2 = _mm256_load_si256(p + i + 2);
+            __m256i acc3 = _mm256_load_si256(p + i + 3);
+
+            __m256i s0_0 = _mm256_load_si256(w_sub0 + i + 0);
+            __m256i s0_1 = _mm256_load_si256(w_sub0 + i + 1);
+            __m256i s0_2 = _mm256_load_si256(w_sub0 + i + 2);
+            __m256i s0_3 = _mm256_load_si256(w_sub0 + i + 3);
+
+            __m256i s1_0 = _mm256_load_si256(w_sub1 + i + 0);
+            __m256i s1_1 = _mm256_load_si256(w_sub1 + i + 1);
+            __m256i s1_2 = _mm256_load_si256(w_sub1 + i + 2);
+            __m256i s1_3 = _mm256_load_si256(w_sub1 + i + 3);
+
+            __m256i a0 = _mm256_load_si256(w_add + i + 0);
+            __m256i a1 = _mm256_load_si256(w_add + i + 1);
+            __m256i a2 = _mm256_load_si256(w_add + i + 2);
+            __m256i a3 = _mm256_load_si256(w_add + i + 3);
+
+            acc0 = _mm256_add_epi16(_mm256_sub_epi16(_mm256_sub_epi16(acc0, s0_0), s1_0), a0);
+            acc1 = _mm256_add_epi16(_mm256_sub_epi16(_mm256_sub_epi16(acc1, s0_1), s1_1), a1);
+            acc2 = _mm256_add_epi16(_mm256_sub_epi16(_mm256_sub_epi16(acc2, s0_2), s1_2), a2);
+            acc3 = _mm256_add_epi16(_mm256_sub_epi16(_mm256_sub_epi16(acc3, s0_3), s1_3), a3);
+
+            _mm256_store_si256(n + i + 0, acc0);
+            _mm256_store_si256(n + i + 1, acc1);
+            _mm256_store_si256(n + i + 2, acc2);
+            _mm256_store_si256(n + i + 3, acc3);
+        }
+    } else {
+        const __m256i* w_sub0 = reinterpret_cast<const __m256i*>(featureWeights[removed[0]]);
+        const __m256i* w_sub1 = reinterpret_cast<const __m256i*>(featureWeights[removed[1]]);
+        const __m256i* w_add0 = reinterpret_cast<const __m256i*>(featureWeights[added[0]]);
+        const __m256i* w_add1 = reinterpret_cast<const __m256i*>(featureWeights[added[1]]);
+
+        for (int i = 0; i < NNUE_HIDDEN / 16; i += 4) {
+            __m256i acc0 = _mm256_load_si256(p + i + 0);
+            __m256i acc1 = _mm256_load_si256(p + i + 1);
+            __m256i acc2 = _mm256_load_si256(p + i + 2);
+            __m256i acc3 = _mm256_load_si256(p + i + 3);
+
+            __m256i s0_0 = _mm256_load_si256(w_sub0 + i + 0);
+            __m256i s0_1 = _mm256_load_si256(w_sub0 + i + 1);
+            __m256i s0_2 = _mm256_load_si256(w_sub0 + i + 2);
+            __m256i s0_3 = _mm256_load_si256(w_sub0 + i + 3);
+
+            __m256i s1_0 = _mm256_load_si256(w_sub1 + i + 0);
+            __m256i s1_1 = _mm256_load_si256(w_sub1 + i + 1);
+            __m256i s1_2 = _mm256_load_si256(w_sub1 + i + 2);
+            __m256i s1_3 = _mm256_load_si256(w_sub1 + i + 3);
+
+            __m256i a0_0 = _mm256_load_si256(w_add0 + i + 0);
+            __m256i a0_1 = _mm256_load_si256(w_add0 + i + 1);
+            __m256i a0_2 = _mm256_load_si256(w_add0 + i + 2);
+            __m256i a0_3 = _mm256_load_si256(w_add0 + i + 3);
+
+            __m256i a1_0 = _mm256_load_si256(w_add1 + i + 0);
+            __m256i a1_1 = _mm256_load_si256(w_add1 + i + 1);
+            __m256i a1_2 = _mm256_load_si256(w_add1 + i + 2);
+            __m256i a1_3 = _mm256_load_si256(w_add1 + i + 3);
+
+            acc0 = _mm256_add_epi16(_mm256_add_epi16(_mm256_sub_epi16(_mm256_sub_epi16(acc0, s0_0), s1_0), a0_0), a1_0);
+            acc1 = _mm256_add_epi16(_mm256_add_epi16(_mm256_sub_epi16(_mm256_sub_epi16(acc1, s0_1), s1_1), a0_1), a1_1);
+            acc2 = _mm256_add_epi16(_mm256_add_epi16(_mm256_sub_epi16(_mm256_sub_epi16(acc2, s0_2), s1_2), a0_2), a1_2);
+            acc3 = _mm256_add_epi16(_mm256_add_epi16(_mm256_sub_epi16(_mm256_sub_epi16(acc3, s0_3), s1_3), a0_3), a1_3);
+
+            _mm256_store_si256(n + i + 0, acc0);
+            _mm256_store_si256(n + i + 1, acc1);
+            _mm256_store_si256(n + i + 2, acc2);
+            _mm256_store_si256(n + i + 3, acc3);
+        }
+    }
+#else
+    for (int i = 0; i < NNUE_HIDDEN; ++i) {
+        int16_t val = prev[i];
+        for (int r = 0; r < numRemoved; ++r) val -= featureWeights[removed[r]][i];
+        for (int a = 0; a < numAdded; ++a) val += featureWeights[added[a]][i];
+        next[i] = val;
+    }
+#endif
+}
+
 } // namespace
 
 bool NNUE::isLoaded() {
@@ -122,8 +251,11 @@ void NNUE::addPiece(Accumulator& acc, int kingSq, Piece piece, int square, Color
 #if defined(__AVX2__)
         __m256i* wAcc = reinterpret_cast<__m256i*>(acc.white.data());
         const __m256i* wW = reinterpret_cast<const __m256i*>(featureWeights[idx]);
-        for (int i = 0; i < NNUE_HIDDEN / 16; ++i) {
-            wAcc[i] = _mm256_add_epi16(wAcc[i], wW[i]);
+        for (int i = 0; i < NNUE_HIDDEN / 16; i += 4) {
+            _mm256_store_si256(wAcc + i + 0, _mm256_add_epi16(_mm256_load_si256(wAcc + i + 0), _mm256_load_si256(wW + i + 0)));
+            _mm256_store_si256(wAcc + i + 1, _mm256_add_epi16(_mm256_load_si256(wAcc + i + 1), _mm256_load_si256(wW + i + 1)));
+            _mm256_store_si256(wAcc + i + 2, _mm256_add_epi16(_mm256_load_si256(wAcc + i + 2), _mm256_load_si256(wW + i + 2)));
+            _mm256_store_si256(wAcc + i + 3, _mm256_add_epi16(_mm256_load_si256(wAcc + i + 3), _mm256_load_si256(wW + i + 3)));
         }
 #else
         for (int i = 0; i < NNUE_HIDDEN; ++i) {
@@ -136,8 +268,11 @@ void NNUE::addPiece(Accumulator& acc, int kingSq, Piece piece, int square, Color
 #if defined(__AVX2__)
         __m256i* bAcc = reinterpret_cast<__m256i*>(acc.black.data());
         const __m256i* bW = reinterpret_cast<const __m256i*>(featureWeights[idx]);
-        for (int i = 0; i < NNUE_HIDDEN / 16; ++i) {
-            bAcc[i] = _mm256_add_epi16(bAcc[i], bW[i]);
+        for (int i = 0; i < NNUE_HIDDEN / 16; i += 4) {
+            _mm256_store_si256(bAcc + i + 0, _mm256_add_epi16(_mm256_load_si256(bAcc + i + 0), _mm256_load_si256(bW + i + 0)));
+            _mm256_store_si256(bAcc + i + 1, _mm256_add_epi16(_mm256_load_si256(bAcc + i + 1), _mm256_load_si256(bW + i + 1)));
+            _mm256_store_si256(bAcc + i + 2, _mm256_add_epi16(_mm256_load_si256(bAcc + i + 2), _mm256_load_si256(bW + i + 2)));
+            _mm256_store_si256(bAcc + i + 3, _mm256_add_epi16(_mm256_load_si256(bAcc + i + 3), _mm256_load_si256(bW + i + 3)));
         }
 #else
         for (int i = 0; i < NNUE_HIDDEN; ++i) {
@@ -154,8 +289,11 @@ void NNUE::removePiece(Accumulator& acc, int kingSq, Piece piece, int square, Co
 #if defined(__AVX2__)
         __m256i* wAcc = reinterpret_cast<__m256i*>(acc.white.data());
         const __m256i* wW = reinterpret_cast<const __m256i*>(featureWeights[idx]);
-        for (int i = 0; i < NNUE_HIDDEN / 16; ++i) {
-            wAcc[i] = _mm256_sub_epi16(wAcc[i], wW[i]);
+        for (int i = 0; i < NNUE_HIDDEN / 16; i += 4) {
+            _mm256_store_si256(wAcc + i + 0, _mm256_sub_epi16(_mm256_load_si256(wAcc + i + 0), _mm256_load_si256(wW + i + 0)));
+            _mm256_store_si256(wAcc + i + 1, _mm256_sub_epi16(_mm256_load_si256(wAcc + i + 1), _mm256_load_si256(wW + i + 1)));
+            _mm256_store_si256(wAcc + i + 2, _mm256_sub_epi16(_mm256_load_si256(wAcc + i + 2), _mm256_load_si256(wW + i + 2)));
+            _mm256_store_si256(wAcc + i + 3, _mm256_sub_epi16(_mm256_load_si256(wAcc + i + 3), _mm256_load_si256(wW + i + 3)));
         }
 #else
         for (int i = 0; i < NNUE_HIDDEN; ++i) {
@@ -168,8 +306,11 @@ void NNUE::removePiece(Accumulator& acc, int kingSq, Piece piece, int square, Co
 #if defined(__AVX2__)
         __m256i* bAcc = reinterpret_cast<__m256i*>(acc.black.data());
         const __m256i* bW = reinterpret_cast<const __m256i*>(featureWeights[idx]);
-        for (int i = 0; i < NNUE_HIDDEN / 16; ++i) {
-            bAcc[i] = _mm256_sub_epi16(bAcc[i], bW[i]);
+        for (int i = 0; i < NNUE_HIDDEN / 16; i += 4) {
+            _mm256_store_si256(bAcc + i + 0, _mm256_sub_epi16(_mm256_load_si256(bAcc + i + 0), _mm256_load_si256(bW + i + 0)));
+            _mm256_store_si256(bAcc + i + 1, _mm256_sub_epi16(_mm256_load_si256(bAcc + i + 1), _mm256_load_si256(bW + i + 1)));
+            _mm256_store_si256(bAcc + i + 2, _mm256_sub_epi16(_mm256_load_si256(bAcc + i + 2), _mm256_load_si256(bW + i + 2)));
+            _mm256_store_si256(bAcc + i + 3, _mm256_sub_epi16(_mm256_load_si256(bAcc + i + 3), _mm256_load_si256(bW + i + 3)));
         }
 #else
         for (int i = 0; i < NNUE_HIDDEN; ++i) {
@@ -179,7 +320,7 @@ void NNUE::removePiece(Accumulator& acc, int kingSq, Piece piece, int square, Co
     }
 }
 
-void NNUE::updateMove(Accumulator& acc, const BitBoard& board, uint16_t encodedMove) {
+void NNUE::updateMove(const Accumulator& prev, Accumulator& next, const BitBoard& board, uint16_t encodedMove) {
     const int from = encodedMove & 0x3f;
     const int to = (encodedMove >> 6) & 0x3f;
     const int flag = encodedMove >> 12;
@@ -193,36 +334,6 @@ void NNUE::updateMove(Accumulator& acc, const BitBoard& board, uint16_t encodedM
     const int wKing = board.whiteKingSquare;
     const int bKing = board.blackKingSquare;
 
-    // 1. King Moves: lazy refresh for the moving king's perspective;
-    // for the opponent perspective, the king is simply an enemy piece moving.
-    if (piece == WK) {
-        acc.computedWhite = false;
-        removePiece(acc, bKing, WK, from, BLACK);
-        addPiece(acc, bKing, WK, to, BLACK);
-        if (capturedPiece != NONE) {
-            removePiece(acc, bKing, capturedPiece, captureSquare, BLACK);
-        }
-        return;
-    }
-    if (piece == BK) {
-        acc.computedBlack = false;
-        removePiece(acc, wKing, BK, from, WHITE);
-        addPiece(acc, wKing, BK, to, WHITE);
-        if (capturedPiece != NONE) {
-            removePiece(acc, wKing, capturedPiece, captureSquare, WHITE);
-        }
-        return;
-    }
-
-    // 2. Normal Piece Moves (Pawn, Knight, Bishop, Rook, Queen):
-    removePiece(acc, wKing, piece, from, WHITE);
-    removePiece(acc, bKing, piece, from, BLACK);
-
-    if (capturedPiece != NONE) {
-        removePiece(acc, wKing, capturedPiece, captureSquare, WHITE);
-        removePiece(acc, bKing, capturedPiece, captureSquare, BLACK);
-    }
-
     Piece placedPiece = piece;
     if (isPromotion) {
         placedPiece = flag == COMPACT_MOVE_PROMOTE_QUEEN ? (isWhiteMove ? WQ : BQ)
@@ -231,29 +342,76 @@ void NNUE::updateMove(Accumulator& acc, const BitBoard& board, uint16_t encodedM
             : (isWhiteMove ? WB : BB);
     }
 
-    if (isCastle) {
-        const bool kingSide = to > from;
-        const int rookFrom = isWhiteMove ? (kingSide ? 63 : 56) : (kingSide ? 7 : 0);
-        const int rookTo = isWhiteMove ? (kingSide ? 61 : 59) : (kingSide ? 5 : 3);
-        const Piece rook = isWhiteMove ? WR : BR;
-
-        if (isWhiteMove) {
-            acc.computedWhite = false;
-            removePiece(acc, bKing, WK, from, BLACK);
-            addPiece(acc, bKing, WK, to, BLACK);
-            removePiece(acc, bKing, rook, rookFrom, BLACK);
-            addPiece(acc, bKing, rook, rookTo, BLACK);
-        } else {
-            acc.computedBlack = false;
-            removePiece(acc, wKing, BK, from, WHITE);
-            addPiece(acc, wKing, BK, to, WHITE);
-            removePiece(acc, wKing, rook, rookFrom, WHITE);
-            addPiece(acc, wKing, rook, rookTo, WHITE);
-        }
+    // 1. White Perspective
+    if (piece == WK) {
+        next.computedWhite = false;
+    } else if (!prev.computedWhite) {
+        next.computedWhite = false;
     } else {
-        addPiece(acc, wKing, placedPiece, to, WHITE);
-        addPiece(acc, bKing, placedPiece, to, BLACK);
+        next.computedWhite = true;
+        int removed[2];
+        int numRemoved = 0;
+        int added[2];
+        int numAdded = 0;
+
+        if (isCastle && !isWhiteMove) {
+            const bool kingSide = to > from;
+            const int rookFrom = kingSide ? 7 : 0;
+            const int rookTo = kingSide ? 5 : 3;
+            removed[0] = whiteFeatureIndex(wKing, BK, from);
+            removed[1] = whiteFeatureIndex(wKing, BR, rookFrom);
+            numRemoved = 2;
+            added[0] = whiteFeatureIndex(wKing, BK, to);
+            added[1] = whiteFeatureIndex(wKing, BR, rookTo);
+            numAdded = 2;
+        } else {
+            removed[numRemoved++] = whiteFeatureIndex(wKing, piece, from);
+            if (capturedPiece != NONE) {
+                removed[numRemoved++] = whiteFeatureIndex(wKing, capturedPiece, captureSquare);
+            }
+            added[numAdded++] = whiteFeatureIndex(wKing, placedPiece, to);
+        }
+
+        applyPerspectiveUpdate(prev.white.data(), next.white.data(), removed, numRemoved, added, numAdded);
     }
+
+    // 2. Black Perspective
+    if (piece == BK) {
+        next.computedBlack = false;
+    } else if (!prev.computedBlack) {
+        next.computedBlack = false;
+    } else {
+        next.computedBlack = true;
+        int removed[2];
+        int numRemoved = 0;
+        int added[2];
+        int numAdded = 0;
+
+        if (isCastle && isWhiteMove) {
+            const bool kingSide = to > from;
+            const int rookFrom = kingSide ? 63 : 56;
+            const int rookTo = kingSide ? 61 : 59;
+            removed[0] = blackFeatureIndex(bKing, WK, from);
+            removed[1] = blackFeatureIndex(bKing, WR, rookFrom);
+            numRemoved = 2;
+            added[0] = blackFeatureIndex(bKing, WK, to);
+            added[1] = blackFeatureIndex(bKing, WR, rookTo);
+            numAdded = 2;
+        } else {
+            removed[numRemoved++] = blackFeatureIndex(bKing, piece, from);
+            if (capturedPiece != NONE) {
+                removed[numRemoved++] = blackFeatureIndex(bKing, capturedPiece, captureSquare);
+            }
+            added[numAdded++] = blackFeatureIndex(bKing, placedPiece, to);
+        }
+
+        applyPerspectiveUpdate(prev.black.data(), next.black.data(), removed, numRemoved, added, numAdded);
+    }
+}
+
+void NNUE::updateMove(Accumulator& acc, const BitBoard& board, uint16_t encodedMove) {
+    Accumulator temp = acc;
+    updateMove(temp, acc, board, encodedMove);
 }
 
 int NNUE::evaluate(const BitBoard& board, Accumulator& acc) {
@@ -267,35 +425,79 @@ int NNUE::evaluate(const BitBoard& board, Accumulator& acc) {
     const int16_t* us = board.sideToMove == WHITE ? acc.white.data() : acc.black.data();
     const int16_t* them = board.sideToMove == WHITE ? acc.black.data() : acc.white.data();
 
-    int32_t sum = outputBias;
-
 #if defined(__AVX2__)
     const __m256i zero = _mm256_setzero_si256();
     const __m256i maxVal = _mm256_set1_epi16(QA);
-    __m256i accSum = _mm256_setzero_si256();
 
-    // Perspective 1: us (friendly pieces)
-    for (int i = 0; i < NNUE_HIDDEN / 16; ++i) {
-        const __m256i in = _mm256_load_si256(reinterpret_cast<const __m256i*>(us) + i);
-        const __m256i clamped = _mm256_min_epi16(_mm256_max_epi16(in, zero), maxVal);
-        const __m256i weight = _mm256_load_si256(reinterpret_cast<const __m256i*>(outputWeights) + i);
-        accSum = _mm256_add_epi32(accSum, _mm256_madd_epi16(clamped, weight));
+    __m256i accSum0 = _mm256_setzero_si256();
+    __m256i accSum1 = _mm256_setzero_si256();
+    __m256i accSum2 = _mm256_setzero_si256();
+    __m256i accSum3 = _mm256_setzero_si256();
+
+    const __m256i* usVec = reinterpret_cast<const __m256i*>(us);
+    const __m256i* outUs = reinterpret_cast<const __m256i*>(outputWeights);
+
+    // Perspective 1: us (friendly pieces) - 16 vectors unrolled 4x
+    for (int i = 0; i < NNUE_HIDDEN / 16; i += 4) {
+        __m256i in0 = _mm256_load_si256(usVec + i + 0);
+        __m256i in1 = _mm256_load_si256(usVec + i + 1);
+        __m256i in2 = _mm256_load_si256(usVec + i + 2);
+        __m256i in3 = _mm256_load_si256(usVec + i + 3);
+
+        __m256i c0 = _mm256_min_epi16(_mm256_max_epi16(in0, zero), maxVal);
+        __m256i c1 = _mm256_min_epi16(_mm256_max_epi16(in1, zero), maxVal);
+        __m256i c2 = _mm256_min_epi16(_mm256_max_epi16(in2, zero), maxVal);
+        __m256i c3 = _mm256_min_epi16(_mm256_max_epi16(in3, zero), maxVal);
+
+        __m256i w0 = _mm256_load_si256(outUs + i + 0);
+        __m256i w1 = _mm256_load_si256(outUs + i + 1);
+        __m256i w2 = _mm256_load_si256(outUs + i + 2);
+        __m256i w3 = _mm256_load_si256(outUs + i + 3);
+
+        accSum0 = _mm256_add_epi32(accSum0, _mm256_madd_epi16(c0, w0));
+        accSum1 = _mm256_add_epi32(accSum1, _mm256_madd_epi16(c1, w1));
+        accSum2 = _mm256_add_epi32(accSum2, _mm256_madd_epi16(c2, w2));
+        accSum3 = _mm256_add_epi32(accSum3, _mm256_madd_epi16(c3, w3));
     }
 
-    // Perspective 2: them (opponent pieces)
-    for (int i = 0; i < NNUE_HIDDEN / 16; ++i) {
-        const __m256i in = _mm256_load_si256(reinterpret_cast<const __m256i*>(them) + i);
-        const __m256i clamped = _mm256_min_epi16(_mm256_max_epi16(in, zero), maxVal);
-        const __m256i weight = _mm256_load_si256(reinterpret_cast<const __m256i*>(outputWeights + NNUE_HIDDEN) + i);
-        accSum = _mm256_add_epi32(accSum, _mm256_madd_epi16(clamped, weight));
+    const __m256i* themVec = reinterpret_cast<const __m256i*>(them);
+    const __m256i* outThem = reinterpret_cast<const __m256i*>(outputWeights + NNUE_HIDDEN);
+
+    // Perspective 2: them (opponent pieces) - 16 vectors unrolled 4x
+    for (int i = 0; i < NNUE_HIDDEN / 16; i += 4) {
+        __m256i in0 = _mm256_load_si256(themVec + i + 0);
+        __m256i in1 = _mm256_load_si256(themVec + i + 1);
+        __m256i in2 = _mm256_load_si256(themVec + i + 2);
+        __m256i in3 = _mm256_load_si256(themVec + i + 3);
+
+        __m256i c0 = _mm256_min_epi16(_mm256_max_epi16(in0, zero), maxVal);
+        __m256i c1 = _mm256_min_epi16(_mm256_max_epi16(in1, zero), maxVal);
+        __m256i c2 = _mm256_min_epi16(_mm256_max_epi16(in2, zero), maxVal);
+        __m256i c3 = _mm256_min_epi16(_mm256_max_epi16(in3, zero), maxVal);
+
+        __m256i w0 = _mm256_load_si256(outThem + i + 0);
+        __m256i w1 = _mm256_load_si256(outThem + i + 1);
+        __m256i w2 = _mm256_load_si256(outThem + i + 2);
+        __m256i w3 = _mm256_load_si256(outThem + i + 3);
+
+        accSum0 = _mm256_add_epi32(accSum0, _mm256_madd_epi16(c0, w0));
+        accSum1 = _mm256_add_epi32(accSum1, _mm256_madd_epi16(c1, w1));
+        accSum2 = _mm256_add_epi32(accSum2, _mm256_madd_epi16(c2, w2));
+        accSum3 = _mm256_add_epi32(accSum3, _mm256_madd_epi16(c3, w3));
     }
 
-    alignas(32) int32_t lanes[8];
-    _mm256_store_si256(reinterpret_cast<__m256i*>(lanes), accSum);
-    for (int i = 0; i < 8; ++i) {
-        sum += lanes[i];
-    }
+    accSum0 = _mm256_add_epi32(accSum0, accSum1);
+    accSum2 = _mm256_add_epi32(accSum2, accSum3);
+    accSum0 = _mm256_add_epi32(accSum0, accSum2);
+
+    __m128i lo = _mm256_castsi256_si128(accSum0);
+    __m128i hi = _mm256_extracti128_si256(accSum0, 1);
+    __m128i sum128 = _mm_add_epi32(lo, hi);
+    sum128 = _mm_add_epi32(sum128, _mm_shuffle_epi32(sum128, _MM_SHUFFLE(1, 0, 3, 2)));
+    sum128 = _mm_add_epi32(sum128, _mm_shuffle_epi32(sum128, _MM_SHUFFLE(2, 3, 0, 1)));
+    const int32_t sum = outputBias + _mm_cvtsi128_si32(sum128);
 #else
+    int32_t sum = outputBias;
     for (int i = 0; i < NNUE_HIDDEN; ++i) {
         const int16_t clampedUs = std::min<int16_t>(std::max<int16_t>(us[i], 0), QA);
         sum += clampedUs * outputWeights[i];

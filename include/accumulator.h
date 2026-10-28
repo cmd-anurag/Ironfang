@@ -11,9 +11,9 @@ constexpr int NNUE_INPUTS = 45056;
 constexpr int NNUE_HIDDEN = 256;
 constexpr int NNUE_SCALE = 400;
 
-struct alignas(32) Accumulator {
-    std::array<int16_t, NNUE_HIDDEN> white;
-    std::array<int16_t, NNUE_HIDDEN> black;
+struct alignas(64) Accumulator {
+    alignas(64) std::array<int16_t, NNUE_HIDDEN> white;
+    alignas(64) std::array<int16_t, NNUE_HIDDEN> black;
     bool computedWhite = false;
     bool computedBlack = false;
 

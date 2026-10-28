@@ -39,7 +39,7 @@ auto initLmrTable = []() {
     std::array<std::array<int, 64>, 64> table{};
     for (int d = 1; d < 64; ++d) {
         for (int m = 1; m < 64; ++m) {
-            table[d][m] = static_cast<int>(0.75 + std::log(d) * std::log(m) / 2.25);
+            table[d][m] = static_cast<int>(0.55 + std::log(d) * std::log(m) / 2.35);
         }
     }
     return table;
@@ -1238,8 +1238,8 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
     const bool improving = !inCheck && (ply >= 2) && (staticEval >= evalStack[ply - 2]);
 
     // Reverse Futility Pruning (RFP / Static Null Move Pruning)
-    if (depth <= (useNNUE ? 4 : 3) && ply > 0 && !inCheck && beta < MATE_THRESHOLD && alpha > -MATE_THRESHOLD) {
-        const int rfpMargin = (useNNUE ? (improving ? 75 : 100) : 75) * depth;
+    if (depth <= (useNNUE ? 6 : 3) && ply > 0 && !inCheck && beta < MATE_THRESHOLD && alpha > -MATE_THRESHOLD) {
+        const int rfpMargin = (useNNUE ? (improving ? 65 : 85) : 75) * depth;
         if (staticEval - rfpMargin >= beta) {
             return beta;
         }
@@ -1252,7 +1252,16 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
             : (board.getBlackPieces() ^ board.getBlackPawns() ^ (1ULL << board.blackKingSquare)) != 0;
         if (hasNonPawns) {
             ++nullMoveTryCount;
-            const int R = 3 + depth / 6;
+            int R = 3 + depth / 6;
+            if (useNNUE) {
+                R += std::min(3, (staticEval - beta) / 180);
+                if (!improving && R > 3) {
+                    --R;
+                }
+            }
+            if (useNNUE && NNUE::isLoaded() && ply + 1 <= MAX_PLY) {
+                accumulatorStack[ply + 1] = accumulatorStack[ply];
+            }
             Gamestate prevState;
             board.makeNullMove(prevState);
             const int nullScore = -minimaxAlphaBeta(board, std::max(0, depth - 1 - R), -beta, -beta + 1, ply + 1, numExtensions, false);
@@ -1310,8 +1319,7 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
         if (moveFlag == COMPACT_MOVE_EN_PASSANT)
             capturedPiece = previousState.sideToMove == WHITE ? BP : WP;
         if (useNNUE && NNUE::isLoaded() && ply + 1 <= MAX_PLY) {
-            accumulatorStack[ply + 1] = accumulatorStack[ply];
-            NNUE::updateMove(accumulatorStack[ply + 1], board, moves[moveIndex].value);
+            NNUE::updateMove(accumulatorStack[ply], accumulatorStack[ply + 1], board, moves[moveIndex].value);
         }
         board.makeSearchMove(moves[moveIndex].value, capturedPiece);
 
@@ -1368,6 +1376,11 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
                 --reduction;
             }
 
+            const bool isPvNode = (beta - alpha > 1);
+            if (isPvNode && reduction > 0) {
+                --reduction;
+            }
+
             if (givesCheck && reduction > 0) {
                 --reduction;
             }
@@ -1389,9 +1402,9 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
 
             const size_t sideIdx = static_cast<size_t>(previousState.sideToMove);
             const int hist = historyHeuristics[sideIdx][from][to];
-            if (hist > 10000 && reduction > 0) {
+            if (hist > 8000 && reduction > 0) {
                 --reduction;
-            } else if (hist < -10000) {
+            } else if (hist < -8000) {
                 ++reduction;
             }
 
@@ -1536,8 +1549,7 @@ int Search::quiescenceSearch(BitBoard& board, int alpha, int beta, int ply) {
         if (moveFlag == COMPACT_MOVE_EN_PASSANT)
             capturedPiece = previousState.sideToMove == WHITE ? BP : WP;
         if (useNNUE && NNUE::isLoaded() && ply + 1 <= MAX_PLY) {
-            accumulatorStack[ply + 1] = accumulatorStack[ply];
-            NNUE::updateMove(accumulatorStack[ply + 1], board, moves[moveIndex].value);
+            NNUE::updateMove(accumulatorStack[ply], accumulatorStack[ply + 1], board, moves[moveIndex].value);
         }
         board.makeSearchMove(moves[moveIndex].value, capturedPiece);
         const int score = -quiescenceSearch(board, -beta, -alpha, ply + 1);
