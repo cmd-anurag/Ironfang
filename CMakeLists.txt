@@ -31,8 +31,7 @@ endif()
 # Include  headers
 include_directories(include)
 
-# Build the active bitboard engine explicitly. The old mailbox Board sources
-# remain in the repository as legacy code, but are not part of the UCI engine.
+# Build the active bitboard engine explicitly.
 set(SOURCES
     src/bitboard.cpp
     src/evaluate.cpp

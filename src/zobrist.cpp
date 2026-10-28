@@ -97,18 +97,3 @@ uint64_t generateZobristHashKey(BitBoard& board) {
     if (board.sideToMove == BLACK) key ^= zobristBlackToMove;
     return key;
 }
-
-uint64_t generateZobristHashKey(Board& board) {
-    uint64_t key = 0;
-    for (int square = 0; square < 64; ++square) {
-        const int index = pieceToZobristIndex(board.getPiece(square));
-        if (index >= 0) key ^= zobristPieces[index][square ^ 56];
-    }
-    key ^= zobristCastling[castlingRightsIndex(
-        board.whiteKingsideCastle, board.whiteQueensideCastle,
-        board.blackKingsideCastle, board.blackQueensideCastle)];
-    const int epFile = board.enPassantSquare < 0 ? 0 : (board.enPassantSquare & 7) + 1;
-    key ^= zobristEnPassant[epFile];
-    if (board.sideToMove == BLACK) key ^= zobristBlackToMove;
-    return key;
-}

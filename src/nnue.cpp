@@ -67,25 +67,45 @@ bool NNUE::loadFile(const std::string& path) {
 }
 
 void NNUE::refreshPerspective(const BitBoard& board, Accumulator& acc, Color side) {
+    auto scan = [&](uint64_t bb, Piece piece, int kingSq) {
+        while (bb) {
+            const int sq = __builtin_ctzll(bb);
+            bb &= bb - 1;
+            addPiece(acc, kingSq, piece, sq, side);
+        }
+    };
+
     if (side == WHITE) {
         std::memcpy(acc.white.data(), featureBiases, sizeof(acc.white));
         const int wKing = board.whiteKingSquare;
-        for (int sq = 0; sq < 64; ++sq) {
-            const Piece piece = board.getPiece(sq);
-            if (piece != NONE && piece != WK) {
-                addPiece(acc, wKing, piece, sq, WHITE);
-            }
-        }
+        scan(board.getWhitePawns(), WP, wKing);
+        scan(board.getWhiteKnights(), WN, wKing);
+        scan(board.getWhiteBishops(), WB, wKing);
+        scan(board.getWhiteRooks(), WR, wKing);
+        scan(board.getWhiteQueens(), WQ, wKing);
+
+        scan(board.getBlackPawns(), BP, wKing);
+        scan(board.getBlackKnights(), BN, wKing);
+        scan(board.getBlackBishops(), BB, wKing);
+        scan(board.getBlackRooks(), BR, wKing);
+        scan(board.getBlackQueens(), BQ, wKing);
+        addPiece(acc, wKing, BK, board.blackKingSquare, WHITE);
         acc.computedWhite = true;
     } else {
         std::memcpy(acc.black.data(), featureBiases, sizeof(acc.black));
         const int bKing = board.blackKingSquare;
-        for (int sq = 0; sq < 64; ++sq) {
-            const Piece piece = board.getPiece(sq);
-            if (piece != NONE && piece != BK) {
-                addPiece(acc, bKing, piece, sq, BLACK);
-            }
-        }
+        scan(board.getBlackPawns(), BP, bKing);
+        scan(board.getBlackKnights(), BN, bKing);
+        scan(board.getBlackBishops(), BB, bKing);
+        scan(board.getBlackRooks(), BR, bKing);
+        scan(board.getBlackQueens(), BQ, bKing);
+
+        scan(board.getWhitePawns(), WP, bKing);
+        scan(board.getWhiteKnights(), WN, bKing);
+        scan(board.getWhiteBishops(), WB, bKing);
+        scan(board.getWhiteRooks(), WR, bKing);
+        scan(board.getWhiteQueens(), WQ, bKing);
+        addPiece(acc, bKing, WK, board.whiteKingSquare, BLACK);
         acc.computedBlack = true;
     }
 }

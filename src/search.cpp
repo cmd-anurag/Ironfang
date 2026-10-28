@@ -137,6 +137,7 @@ std::array<int, MAX_PLY> pvLength{};
 std::array<std::array<SearchMove, MAX_SEARCH_MOVES>, MAX_PLY> searchMoveBuffers;
 std::array<std::array<int, MAX_SEARCH_MOVES>, MAX_PLY> searchMoveScores;
 std::array<Accumulator, MAX_PLY + 1> accumulatorStack;
+std::array<int, MAX_PLY + 2> evalStack{};
 
 inline int evaluatePosition(const BitBoard& board, int ply) {
     if (useNNUE && NNUE::isLoaded() && ply <= MAX_PLY) {
@@ -773,11 +774,13 @@ void orderMoves(BitBoard& board, SearchMove* moves, int* scores, int moveCount, 
             if (!isCapture && isPromotion && flag == COMPACT_MOVE_PROMOTE_QUEEN)
                 score += PROMOTION_BIAS;
         } else if (movingType != 6) {
-            const int tableIndex = movingType - 1;
-            if (tableIndex >= 0 && tableIndex < 5) {
-                const int fromSquare = squareForPieceSquareTable(piece, from);
-                const int toSquare = squareForPieceSquareTable(piece, to);
-                score += PST[tableIndex][toSquare] - PST[tableIndex][fromSquare];
+            if (!useNNUE) {
+                const int tableIndex = movingType - 1;
+                if (tableIndex >= 0 && tableIndex < 5) {
+                    const int fromSquare = squareForPieceSquareTable(piece, from);
+                    const int toSquare = squareForPieceSquareTable(piece, to);
+                    score += PST[tableIndex][toSquare] - PST[tableIndex][fromSquare];
+                }
             }
 
             if (opponentPawnAttacks & (1ULL << to)) {
@@ -1193,13 +1196,6 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
 
     if (ply > 0 &&
         (board.halfmoveClock >= 100 || isRepetitionDraw(board, ply))) {
-        const uint64_t whitePiecesNoPawnsKings =
-            board.getWhitePieces() ^ board.getWhitePawns() ^ (1ULL << board.whiteKingSquare);
-        const uint64_t blackPiecesNoPawnsKings =
-            board.getBlackPieces() ^ board.getBlackPawns() ^ (1ULL << board.blackKingSquare);
-        if (whitePiecesNoPawnsKings || blackPiecesNoPawnsKings) {
-            return board.sideToMove == WHITE ? -10 : 10;
-        }
         return 0;
     }
 
@@ -1237,10 +1233,13 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
 
     const bool inCheck = board.isInCheck();
     const int staticEval = !inCheck ? evaluatePosition(board, ply) : -INF;
+    if (ply < MAX_PLY + 2) evalStack[ply] = staticEval;
+
+    const bool improving = !inCheck && (ply >= 2) && (staticEval >= evalStack[ply - 2]);
 
     // Reverse Futility Pruning (RFP / Static Null Move Pruning)
-    if (depth <= 3 && ply > 0 && !inCheck && beta < MATE_THRESHOLD && alpha > -MATE_THRESHOLD) {
-        const int rfpMargin = (useNNUE && NNUE::isLoaded() ? 90 : 75) * depth;
+    if (depth <= (useNNUE ? 4 : 3) && ply > 0 && !inCheck && beta < MATE_THRESHOLD && alpha > -MATE_THRESHOLD) {
+        const int rfpMargin = (useNNUE ? (improving ? 75 : 100) : 75) * depth;
         if (staticEval - rfpMargin >= beta) {
             return beta;
         }
@@ -1364,6 +1363,10 @@ int Search::minimaxAlphaBeta(BitBoard& board, int depth, int alpha, int beta, in
             const int d = std::min(depth, 63);
             const int m = std::min(moveIndex, 63);
             reduction = lmrTable[d][m];
+
+            if (!improving && reduction > 0) {
+                --reduction;
+            }
 
             if (givesCheck && reduction > 0) {
                 --reduction;

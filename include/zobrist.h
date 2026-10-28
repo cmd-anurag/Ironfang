@@ -1,7 +1,6 @@
 #pragma once
 #include <cstdint>
 #include "types.h"
-#include "board.h"
 #include "bitboard.h"
 
 extern uint64_t zobristPieces[12][64]; // 12 Piece types - 64 possible squares for each
@@ -10,7 +9,6 @@ extern uint64_t zobristEnPassant[9]; // index 0 is no square, 1-8 are files a-h
 extern uint64_t zobristBlackToMove;
 
 void initZobrist();
-uint64_t generateZobristHashKey(Board &b);
 uint64_t generateZobristHashKey(BitBoard &b);
 
 inline int pieceToZobristIndex(Piece p) {
