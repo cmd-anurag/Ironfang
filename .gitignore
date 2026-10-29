@@ -22,5 +22,5 @@ sc.py
 
 # Datasets and training checkpoints
 /data/
-/resources/checkpoint.pt
+/resources/checkpoint*.pt
 /resources/leorik_256.nnue
