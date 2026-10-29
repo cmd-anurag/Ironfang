@@ -415,20 +415,39 @@ def train(args):
 
     # Step 3: Initialize model, optimizer, scheduler & loss
     model = IronfangNNUE(hidden=args.hidden).to(device)
-    if args.resume and os.path.isfile(args.resume):
-        print(f"Resuming weights from checkpoint: {args.resume}")
-        model.load_state_dict(torch.load(args.resume, map_location=device))
-
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-5)
+    scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.gamma)
     criterion = nn.MSELoss()
 
-    print(f"\nStarting GPU Training: {len(dataset):,} positions | {args.epochs} epochs | Batch Size: {args.batch_size}")
+    global_epoch_offset = 0
+    if args.resume and os.path.isfile(args.resume):
+        print(f"Resuming weights from checkpoint: {args.resume}")
+        chk = torch.load(args.resume, map_location=device)
+        if isinstance(chk, dict) and "model" in chk:
+            model.load_state_dict(chk["model"])
+            if "optimizer" in chk and chk["optimizer"] is not None:
+                try:
+                    optimizer.load_state_dict(chk["optimizer"])
+                    print("Restored Adam optimizer momentum buffers.")
+                except Exception as e:
+                    print(f"Notice: Initialized fresh optimizer state ({e}).")
+            if "scheduler" in chk and chk["scheduler"] is not None:
+                try:
+                    scheduler.load_state_dict(chk["scheduler"])
+                    print("Restored exponential learning rate scheduler state.")
+                except Exception as e:
+                    pass
+            global_epoch_offset = chk.get("global_epoch", 0)
+        else:
+            model.load_state_dict(chk)
+
+    print(f"\nStarting GPU Training: {len(dataset):,} positions | {args.epochs} epochs | Batch Size: {args.batch_size} | Gamma: {args.gamma}")
     print("-" * 70)
 
     start_time = time.time()
     for epoch in range(1, args.epochs + 1):
         epoch_start = time.time()
+        current_lr = optimizer.param_groups[0]["lr"]
         total_loss = 0.0
         batches = 0
 
@@ -445,6 +464,8 @@ def train(args):
             loss = criterion(pred_prob, targets)
 
             loss.backward()
+            # Gradient clipping to prevent gradient spikes (Stockfish nnue-pytorch standard)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
             total_loss += loss.item()
@@ -466,7 +487,8 @@ def train(args):
         cp_kpk = test_eval(model, device, "8/4k3/8/4P3/4K3/8/8/8 w - - 0 1")
         cp_krpkr = test_eval(model, device, "8/2R5/8/4k3/8/8/4K3/r7 w - - 0 1")
 
-        print(f"Epoch {epoch:2d}/{args.epochs:2d} | Loss: {avg_loss:.5f} | Speed: {pos_per_sec:,.0f} pos/sec | Time: {elapsed:.1f}s")
+        global_ep = global_epoch_offset + epoch
+        print(f"Epoch {epoch:2d}/{args.epochs:2d} (Global Ep {global_ep:2d}, LR: {current_lr:.6f}) | Loss: {avg_loss:.5f} | Speed: {pos_per_sec:,.0f} pos/sec | Time: {elapsed:.1f}s")
         print(f"   Middlegame: Start: {cp_start:+.0f} cp | +Queen: {cp_up_q:+.0f} cp | -Queen: {cp_dn_q:+.0f} cp")
         print(f"   Opening:    5...Be7: {cp_ruy_e7:+.0f} cp | 5...Rg8: {cp_ruy_g8:+.0f} cp")
         print(f"   Endgame:    K+P vs K: {cp_kpk:+.0f} cp | Rook Ending: {cp_krpkr:+.0f} cp")
@@ -477,10 +499,16 @@ def train(args):
 
     # Step 4: Export quantized network for Ironfang C++
     model.export_quantized(args.output)
-    # Also save PyTorch checkpoint for future training/resuming
+    # Also save PyTorch checkpoint with optimizer and scheduler state for seamless future training
     chk_path = args.checkpoint if hasattr(args, "checkpoint") and args.checkpoint else "resources/checkpoint.pt"
-    torch.save(model.state_dict(), chk_path)
-    print(f"Saved PyTorch checkpoint to {chk_path} (ready for future fine-tuning!)")
+    torch.save({
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "scheduler": scheduler.state_dict(),
+        "global_epoch": global_epoch_offset + args.epochs,
+        "current_lr": optimizer.param_groups[0]["lr"]
+    }, chk_path)
+    print(f"Saved PyTorch checkpoint to {chk_path} (model, optimizer, scheduler, LR: {optimizer.param_groups[0]['lr']:.6f})")
 
 def main():
     parser = argparse.ArgumentParser(description="Train Ironfang HalfKAv2 NNUE Network on Lichess Dataset")
@@ -494,6 +522,7 @@ def main():
     parser.add_argument("--epochs", type=int, default=5, help="Number of training epochs (default: 5)")
     parser.add_argument("--batch-size", type=int, default=8192, help="Batch size for GPU training (default: 8192)")
     parser.add_argument("--lr", type=float, default=0.001, help="Learning rate (default: 0.001)")
+    parser.add_argument("--gamma", type=float, default=0.995, help="Exponential learning rate decay factor per epoch (Stockfish standard: 0.995)")
     parser.add_argument("--data", type=str, default=None, help="Path to local parquet file (optional)")
     parser.add_argument("--resume", type=str, default=None, help="Resume from previous checkpoint .pt")
     parser.add_argument("--checkpoint", type=str, default="resources/checkpoint.pt", help="Checkpoint save path (default: resources/checkpoint.pt)")
