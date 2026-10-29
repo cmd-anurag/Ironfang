@@ -78,7 +78,7 @@ void uciLoop() {
         iss >> token;
 
         if(token == "uci") {
-            printUciLine("id name Ironfangv33");
+            printUciLine("id name Ironfangv34");
             printUciLine("id author dark");
             printUciLine("option name UseNNUE type check default true");
             printUciLine("option name EvalFile type string default resources/ironfang.nnue");

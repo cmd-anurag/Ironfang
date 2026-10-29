@@ -1,0 +1,11 @@
+id,name,side,fen,best_moves,description
+opera_game,The Opera Game (Morphy 1858),w,4kb1r/p2nqppp/5n2/1B2p1B1/4P3/1Q6/PPP2PPP/2KR4 w k - 0 16,b5d7;b3b8,"Morphy's famous 16. Bxd7+! or 16. Qb8+!! queen sacrifice leading to Rd8#"
+fischer_century,Game of the Century (Fischer 1956),b,r3r1k1/pp3pbp/1qp3p1/2B5/2B1n3/2N2N2/PPP2PPP/R2QR1K1 b - - 0 17,c8e6,"13-year-old Fischer's immortal 17... Be6!! queen sacrifice against Donald Byrne"
+kasparov_immortal,Kasparov's Immortal (1999),w,b2r3r/4k1pp/p2qpp2/8/Pn1P4/1B3N2/1P3PPP/2RQR1K1 w - - 0 24,d1d4;e1e6,"Kasparov's magnificent 24. Rxd4!! exchange sacrifice against Topalov"
+immortal_game,The Immortal Game (Anderssen 1851),w,r1bk2nr/p2p1pNp/n2B4/1p1NP2P/6P1/3P1Q2/P1P1K3/q5b1 w - - 0 1,f3f6,"Anderssen's 1. Qf6+!! Nxf6 2. Be7# mating net"
+lasker_double_sac,Lasker's Double Bishop Sac (1889),w,r1b2rk1/pp1p1ppp/2n1pn2/8/2BNP3/2N5/PPP2PPP/R2Q1RK1 w - - 0 15,c4h7;d4c6,"Lasker's historic 15. Bxh7+! followed by Bxg7 double bishop sacrifice"
+reti_study,Reti's Endgame Study (1921),w,7K/8/k1P5/7p/8/8/8/8 w - - 0 1,h8g7,"Reti's famous diagonal King march 1. Kg7! h4 2. Kf6! securing the draw"
+saavedra_study,The Saavedra Position (1895),w,8/8/1KP5/3r4/8/8/8/k7 w - - 0 1,c6c7,"Famous underpromotion study starting with 1. c7 Rd6+ 2. Kb5 Rd5+ 3. Kb4"
+evergreen_game,The Evergreen Game (Anderssen 1852),w,r1b2k1r/pp1p1ppp/2n5/q1b5/8/1B3N2/PB3PPP/R2QR1K1 w - - 0 17,b3f7;e1e8;a1c1,"Anderssen's attacking masterclass against Dufresne"
+deep_blue_game6,Deep Blue vs Kasparov G6 (1997),w,rn1qk2r/pp2bppp/2p1pn2/5b2/3P4/2N2NP1/PPP1BP1P/R1BQK2R w KQkq - 0 8,e1g1;c3e4;d1d3;f3h4,"Deep Blue's positional clash with Kasparov in Game 6"
+botvinnik_capa,Botvinnik vs Capablanca (1938),w,4r3/p1pr1kpp/1p3p2/3P4/2P1bP2/B2p4/PP1R2PP/4R1K1 w - - 0 30,d5d6;a3b4;e1e3,"Botvinnik's positional deflection masterclass against Capablanca"

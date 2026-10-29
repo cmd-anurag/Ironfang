@@ -35,6 +35,7 @@ Ironfang is a high-performance, UCI-compliant chess engine written in C++17 util
 | **v31** | `11a5c68` | Graph History Interaction (GHI) / TT Repetition Blindness Bypass (`hasAppearedInGameHistory`), full 4-tier regression suite verification, known blunders regression harness. | **+34.9 Elo vs. v30** (3 – 2 – 5, undefeated by time);<br>**100.0% Sweep vs. Reference** (6 – 0 – 0, all checkmates);<br>**93.2% (233/250) on 250 Puzzles**;<br>**4/4 (100%) Known Blunders Passed**;<br>**Zero Speed/NPS Regression**. |
 | **v32** | `2d6fb49` | Structural castling tracking (`whiteHasCastled`/`blackHasCastled`), counter-move heuristic table (`counterMoves[64][64]`), counter-move LMR discount, uncastled king penalty fix. | **+147.2 Elo vs. v31** (7.0 – 3.0);<br>**+416.6 Elo vs. Reference** (5.5 – 0.5);<br>**94.0% (235/250) on 250 Puzzles**;<br>**5/5 (100%) Known Blunders Passed**. |
 | **v33** | `58a13d3` | **Pure HalfKAv2 NNUE Evaluation** (40,960 -> 256 -> 1 quantized network, SIMD accumulators, streaming dataset training pipeline), Stockfish-style Dual-Bound Dynamic Time Management (`include/timeman.h`, `src/timeman.cpp`), obvious-move node fraction savings, instability extensions, 52-opening balanced benchmark suite. | **+139.0 Elo vs. v32 across 100 Games** (64 – 26 – 10, 100.0% LOS);<br>**100.0% (7/7) Known Blunders Passed**;<br>**Record 94.8% on Blitz Tactical Suite**;<br>**100.0% (50/50) Endgame Suite**;<br>**Throughput: ~3.1M NPS at d15–d16**. |
+| **v34** | `HEAD` | **100M Century Milestone HalfKAv2 512-Hidden NNUE**: Scaled architecture to 512-hidden neurons (23.1M params), aligned training with official Stockfish `nnue-pytorch` standards ($\gamma=0.995$ continuous geometric decay, persistent Adam momentum vectors, gradient norm clipping at 1.0, 3-phase golden ratio sampling). Added 6th Regression Tier (Famous Historic Positions). | **+240.8 Elo vs. v33** (8.0 – 2.0, 98.3% LOS);<br>**+107.5 Elo vs. v32 Peak HCE** (6.5 – 3.5);<br>**+279.6 Elo vs. Reference Engine** (5.0 – 1.0);<br>**All-Time Record 97.2% (243/250) on Puzzles** (100% Motifs, 100% Endgames, 94% GM);<br>**9/10 (90%) Known Blunders Passed**;<br>**Training Loss: 0.01072**. |
 
 ---
 
@@ -307,13 +308,14 @@ A candidate release for Ironfang v32 was developed and put through the standard 
 
 ## 4. Development Standards & Tooling
 
-### 4.1 Standard 5-Tier Regression Protocol
-Every newly compiled milestone must complete the five-tier regression harness before deployment:
+### 4.1 Standard 6-Tier Regression Protocol
+Every newly compiled milestone must complete the six-tier regression harness before deployment:
 1. **Tier 1 - Previous Version Match**: 10 games against `v<N-1>` at `10+0.1` via Cutechess CLI. Must achieve $\ge 50\%$ or demonstrate positive Elo.
 2. **Tier 2 - Reference Engine Match**: 6 games against Reference Engine at `10+0.1` via Cutechess CLI.
 3. **Tier 3 - Tactical Puzzle Suite**: 250 curated puzzles evaluated at `25ms`, `100ms`, and `250ms` via `tools/solve_puzzles.py`.
 4. **Tier 4 - Known Blunders Suite**: Verification against all historically identified blunder and loss positions via `python tools/test_known_blunders.py --engine <exe>`.
 5. **Tier 5 - Speed Benchmark**: Verification of throughput / NPS comparison strictly against `bench-v<N-1>-1s.csv` via `python tools/bench.py --engine <exe> --movetime 1000`. Must not regress in search depth.
+6. **Tier 6 - Famous Historic Positions Suite**: Verification of historic sacrificial and study positions via `python tools/test_famous_positions.py --engine <exe> --movetime 1000`.
 
 ### 4.2 Binary Compilation & Release Archive
 Compile using CMake and Ninja on Windows x64:
@@ -329,6 +331,7 @@ All milestone executables are permanently archived by version in `D:/engines/`:
 - `D:/engines/v31/v31.exe`
 - `D:/engines/v32/v32.exe`
 - `D:/engines/v33/v33.exe`
+- `D:/engines/v34/v34.exe`
 
 *(Rule: File copy commands to `D:/engines/` must never use `-Force` to prevent accidental overwrites).*
 
